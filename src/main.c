@@ -37,6 +37,9 @@ VkSemaphore *render_finished_semaphore;
 VkFence *in_flight_fences;
 VkFence *image_in_flight; //whether an image from our swapchain is being rendered at that moment
 
+VkBuffer vertex_buffer;
+VkDeviceMemory vertex_buffer_memory;
+
 u32 current_frame = 0;
 const int MAX_FRAMES_IN_FLIGHT = 2;
 
@@ -44,6 +47,43 @@ u32 framebuffer_resized = 0;
 
 const char *device_extensions[] = {VK_KHR_SWAPCHAIN_EXTENSION_NAME};
 
+
+typedef struct Vert
+{
+    vec2 pos;
+    vec3 color;
+}Vert;
+
+internal const Vert vertices[] = {
+    {{0.0f, -0.5f},{1.0f,0.2f,0.0f}},
+    {{0.5f,  0.5f},{0.0f,1.0f,0.2f}},
+    {{-0.5f,0.5f},{0.2f,0.0f,1.0f}}
+};
+
+internal VkVertexInputBindingDescription get_binding_desc(void)
+{
+    VkVertexInputBindingDescription binding_desc;
+
+    binding_desc.binding = 0;
+    binding_desc.stride = sizeof(Vert);
+    binding_desc.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
+
+    return binding_desc;
+}
+
+//gets attribute descriptions for 'Vert' type vertices
+internal void vert_get_attrib_descs(VkVertexInputAttributeDescription *attribs) //size 2
+{
+    attribs[0].binding = 0;
+    attribs[0].location = 0;
+    attribs[0].format = VK_FORMAT_R32G32_SFLOAT;
+    attribs[0].offset = offsetof(Vert, pos);//nice macro
+
+    attribs[1].binding = 0;
+    attribs[1].location = 1;
+    attribs[1].format = VK_FORMAT_R32G32B32_SFLOAT;
+    attribs[1].offset = offsetof(Vert, color); 
+}
 
 #define VALIDATION_LAYERS_COUNT 1
 const char *validation_layers[VALIDATION_LAYERS_COUNT] = {"VK_LAYER_KHRONOS_validation"};
@@ -529,14 +569,17 @@ internal void create_graphics_pipeline()
 	VkPipelineShaderStageCreateInfo shader_stages[] = {vert_shader_stage_info, frag_shader_stage_info};
 	
 	
+    VkVertexInputBindingDescription binding_desc = get_binding_desc();
+    VkVertexInputAttributeDescription attribs[2];
+    vert_get_attrib_descs(attribs);
 	
-	//---VERTEX INPUT---
+	//---VERTEX INPUT--- (+vertex buffer above)
 	VkPipelineVertexInputStateCreateInfo vertex_input_info = {0};
 	vertex_input_info.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
-	vertex_input_info.vertexBindingDescriptionCount = 0;
-	vertex_input_info.pVertexBindingDescriptions = NULL;
-	vertex_input_info.vertexAttributeDescriptionCount = 0;
-	vertex_input_info.pVertexAttributeDescriptions = NULL;
+	vertex_input_info.vertexBindingDescriptionCount = 1;
+	vertex_input_info.pVertexBindingDescriptions = &binding_desc;
+	vertex_input_info.vertexAttributeDescriptionCount = array_count(attribs);
+	vertex_input_info.pVertexAttributeDescriptions = &attribs;
 	
 	//---INPUT ASSEMBLY---
 	VkPipelineInputAssemblyStateCreateInfo input_asm_info = {0};
@@ -728,6 +771,57 @@ internal void create_framebuffers()
 	}
 }
 
+internal u32 find_mem_type(u32 type_filter, VkMemoryPropertyFlags properties)
+{
+    VkPhysicalDeviceMemoryProperties mem_properties;
+    vkGetPhysicalDeviceMemoryProperties(physical_device, &mem_properties);
+
+    u32 i;
+    for(i = 0; i < mem_properties.memoryTypeCount; ++i)
+    {
+        if ( (type_filter & (1 << i)) && 
+               ((mem_properties.memoryTypes[i].propertyFlags & properties)==properties))
+            return i;
+    }
+
+    if (i == mem_properties.memoryTypeCount) //means we didn't find the mem prop we want
+        printf("Failed to find suitable memory type!\n");
+
+}
+
+internal void create_vertex_buffers()
+{
+    VkBufferCreateInfo buf_info = {0};
+    buf_info.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+    buf_info.size = sizeof(vertices);
+    buf_info.usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
+    buf_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+
+    if (vkCreateBuffer(device, &buf_info, NULL, &vertex_buffer)!= VK_SUCCESS)
+        printf("failed to create a vertex buffer!\n");
+
+    VkMemoryRequirements mem_req = {0};
+    vkGetBufferMemoryRequirements(device, vertex_buffer, &mem_req);
+
+    VkMemoryAllocateInfo alloc_info = {0};
+    alloc_info.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    alloc_info.allocationSize = mem_req.size;
+    alloc_info.memoryTypeIndex = find_mem_type(mem_req.memoryTypeBits, 
+            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+    if (vkAllocateMemory(device, &alloc_info, NULL, &vertex_buffer_memory)!=VK_SUCCESS)
+        printf("Failed to allocate vertex buffer memory!\n");
+
+    vkBindBufferMemory(device, vertex_buffer, vertex_buffer_memory, 0);
+
+    void *vert_data;
+    //we map vert_data to GPU memory 
+    vkMapMemory(device, vertex_buffer_memory, 0, buf_info.size, 0, &vert_data);
+    //we copy the vertex data to that memory 
+    memcpy(vert_data, vertices, (u32)buf_info.size);
+    //we unmap it
+    vkUnmapMemory(device, vertex_buffer_memory);
+}
+
 internal void create_command_pool()
 {
 	QueueFamilyIndices queue_family_indices = find_queue_families(physical_device);
@@ -775,9 +869,13 @@ internal void create_command_buffers()
 		vkCmdBeginRenderPass(command_buffers[i], &render_pass_info, VK_SUBPASS_CONTENTS_INLINE);//also clears screen
 		//[3]: We bind our pipeline
 		vkCmdBindPipeline(command_buffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, graphics_pipeline);
-		//[4]: We draw our vertices
-		vkCmdDraw(command_buffers[i], 3,1,0,0);
-		//[5]: We end the render pass, and stop captuing the command buffer, we are done!
+        //[4]: We bind our vertex buffers
+        VkBuffer vertex_buffers[] = {vertex_buffer};
+        VkDeviceSize offsets[] = {0};
+        vkCmdBindVertexBuffers(command_buffers[i], 0, 1, vertex_buffers, offsets);
+		//[5]: We draw our vertices
+		vkCmdDraw(command_buffers[i], sizeof(vertices),1,0,0);
+		//[6]: We end the render pass, and stop captuing the command buffer, we are done!
 		vkCmdEndRenderPass(command_buffers[i]);//stores the image
 		
 		if (vkEndCommandBuffer(command_buffers[i]) != VK_SUCCESS)
@@ -946,6 +1044,7 @@ internal int vulkan_init()
 	create_graphics_pipeline();
 	create_framebuffers();
 	create_command_pool();
+    create_vertex_buffers();
 	create_command_buffers();
 	create_sync_objects();
 	return TRUE;
@@ -967,6 +1066,8 @@ internal void main_loop(void)
 internal void cleanup(void)
 {
 	cleanup_swapchain();
+    vkDestroyBuffer(device, vertex_buffer, NULL);
+    vkFreeMemory(device, vertex_buffer_memory, NULL);
 	for (u32 i = 0; i < MAX_FRAMES_IN_FLIGHT; ++i)
 	{
 		vkDestroySemaphore(device, render_finished_semaphore[i], NULL);
