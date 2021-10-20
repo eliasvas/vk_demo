@@ -40,6 +40,10 @@ VkFence *image_in_flight; //whether an image from our swapchain is being rendere
 VkBuffer vertex_buffer;
 VkDeviceMemory vertex_buffer_memory;
 
+VkBuffer index_buffer;
+VkDeviceMemory index_buffer_memory;
+
+
 u32 current_frame = 0;
 const int MAX_FRAMES_IN_FLIGHT = 2;
 
@@ -55,10 +59,12 @@ typedef struct Vert
 }Vert;
 
 internal const Vert vertices[] = {
-    {{0.0f, -0.5f},{1.0f,0.2f,0.0f}},
+    {{-0.5f,-0.5f},{0.2f,0.0f,1.0f}},
+    {{0.5f, -0.5f},{1.0f,0.2f,0.0f}},
+    {{-0.5f,0.5f},{0.2f,0.0f,1.0f}},
     {{0.5f,  0.5f},{0.0f,1.0f,0.2f}},
-    {{-0.5f,0.5f},{0.2f,0.0f,1.0f}}
 };
+internal const u32 indices[] = {0,1,2,2,1,3};
 
 internal VkVertexInputBindingDescription get_binding_desc(void)
 {
@@ -789,38 +795,64 @@ internal u32 find_mem_type(u32 type_filter, VkMemoryPropertyFlags properties)
 
 }
 
-internal void create_vertex_buffers()
+internal void create_buffer(VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags properties,
+        VkBuffer *buf, VkDeviceMemory *buf_memory)
 {
-    VkBufferCreateInfo buf_info = {0};
-    buf_info.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
-    buf_info.size = sizeof(vertices);
-    buf_info.usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
-    buf_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    VkBufferCreateInfo buffer_info = {0};
+    buffer_info.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+    buffer_info.size = size;
+    buffer_info.usage = usage;
+    buffer_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
 
-    if (vkCreateBuffer(device, &buf_info, NULL, &vertex_buffer)!= VK_SUCCESS)
-        printf("failed to create a vertex buffer!\n");
+    if (vkCreateBuffer(device, &buffer_info, NULL, buf)!=VK_SUCCESS)
+        printf("Failed to create buffer.\n");
 
-    VkMemoryRequirements mem_req = {0};
-    vkGetBufferMemoryRequirements(device, vertex_buffer, &mem_req);
+    VkMemoryRequirements mem_req;
+    vkGetBufferMemoryRequirements(device, *buf, &mem_req);
 
     VkMemoryAllocateInfo alloc_info = {0};
     alloc_info.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
     alloc_info.allocationSize = mem_req.size;
-    alloc_info.memoryTypeIndex = find_mem_type(mem_req.memoryTypeBits, 
-            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-    if (vkAllocateMemory(device, &alloc_info, NULL, &vertex_buffer_memory)!=VK_SUCCESS)
-        printf("Failed to allocate vertex buffer memory!\n");
+    alloc_info.memoryTypeIndex = find_mem_type(mem_req.memoryTypeBits, properties);
 
-    vkBindBufferMemory(device, vertex_buffer, vertex_buffer_memory, 0);
+    if (vkAllocateMemory(device, &alloc_info, NULL, buf_memory)!=VK_SUCCESS)
+        printf("Failed to allocate buffer memory!\n");
 
+    vkBindBufferMemory(device, *buf, *buf_memory, 0);
+}
+
+internal void create_vertex_buffer()
+{
+    VkDeviceSize buf_size = sizeof(vertices);
+    create_buffer(buf_size, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, 
+            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+            &vertex_buffer, &vertex_buffer_memory);
+  
     void *vert_data;
     //we map vert_data to GPU memory 
-    vkMapMemory(device, vertex_buffer_memory, 0, buf_info.size, 0, &vert_data);
+    vkMapMemory(device, vertex_buffer_memory, 0, buf_size, 0, &vert_data);
     //we copy the vertex data to that memory 
-    memcpy(vert_data, vertices, (u32)buf_info.size);
+    memcpy(vert_data, vertices, (u32)buf_size);
     //we unmap it
     vkUnmapMemory(device, vertex_buffer_memory);
 }
+
+internal void create_index_buffer()
+{
+    VkDeviceSize buf_size = sizeof(indices);
+    create_buffer(buf_size, VK_BUFFER_USAGE_INDEX_BUFFER_BIT, 
+            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+            &index_buffer, &index_buffer_memory);
+  
+    void *index_data;
+    //we map vert_data to GPU memory 
+    vkMapMemory(device, index_buffer_memory, 0, buf_size, 0, &index_data);
+    //we copy the vertex data to that memory 
+    memcpy(index_data, indices, (u32)buf_size);
+    //we unmap it
+    vkUnmapMemory(device, index_buffer_memory);
+}
+
 
 internal void create_command_pool()
 {
@@ -869,12 +901,13 @@ internal void create_command_buffers()
 		vkCmdBeginRenderPass(command_buffers[i], &render_pass_info, VK_SUBPASS_CONTENTS_INLINE);//also clears screen
 		//[3]: We bind our pipeline
 		vkCmdBindPipeline(command_buffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, graphics_pipeline);
-        //[4]: We bind our vertex buffers
+        //[4]: We bind our vertex/index buffers
         VkBuffer vertex_buffers[] = {vertex_buffer};
         VkDeviceSize offsets[] = {0};
         vkCmdBindVertexBuffers(command_buffers[i], 0, 1, vertex_buffers, offsets);
+        vkCmdBindIndexBuffer(command_buffers[i], index_buffer, 0, VK_INDEX_TYPE_UINT32);
 		//[5]: We draw our vertices
-		vkCmdDraw(command_buffers[i], sizeof(vertices),1,0,0);
+		vkCmdDrawIndexed(command_buffers[i], array_count(indices),1,0,0,0);
 		//[6]: We end the render pass, and stop captuing the command buffer, we are done!
 		vkCmdEndRenderPass(command_buffers[i]);//stores the image
 		
@@ -1044,7 +1077,8 @@ internal int vulkan_init()
 	create_graphics_pipeline();
 	create_framebuffers();
 	create_command_pool();
-    create_vertex_buffers();
+    create_vertex_buffer();
+    create_index_buffer();
 	create_command_buffers();
 	create_sync_objects();
 	return TRUE;
@@ -1068,6 +1102,8 @@ internal void cleanup(void)
 	cleanup_swapchain();
     vkDestroyBuffer(device, vertex_buffer, NULL);
     vkFreeMemory(device, vertex_buffer_memory, NULL);
+    vkDestroyBuffer(device, index_buffer, NULL);
+    vkFreeMemory(device, index_buffer_memory, NULL);
 	for (u32 i = 0; i < MAX_FRAMES_IN_FLIGHT; ++i)
 	{
 		vkDestroySemaphore(device, render_finished_semaphore[i], NULL);
