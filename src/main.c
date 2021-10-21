@@ -25,6 +25,7 @@ VkImageView *swapchain_image_views;
 VkShaderModule vert_shader_module;
 VkShaderModule frag_shader_module;
 VkRenderPass render_pass;
+VkDescriptorSetLayout descriptor_set_layout;
 VkPipelineLayout pipeline_layout;
 VkPipeline graphics_pipeline; //!!!
 
@@ -42,6 +43,12 @@ VkDeviceMemory vertex_buffer_memory;
 
 VkBuffer index_buffer;
 VkDeviceMemory index_buffer_memory;
+
+VkBuffer *uniform_buffers;
+VkDeviceMemory *uniform_buffers_memory;
+
+VkDescriptorPool descriptor_pool;
+VkDescriptorSet *descriptor_sets;
 
 
 u32 current_frame = 0;
@@ -65,6 +72,13 @@ internal const Vert vertices[] = {
     {{0.5f,  0.5f},{0.0f,1.0f,0.2f}},
 };
 internal const u32 indices[] = {0,1,2,2,1,3};
+
+typedef struct UniformBufferObject
+{
+    mat4 model;
+    mat4 view;
+    mat4 proj;
+}UniformBufferObject;
 
 internal VkVertexInputBindingDescription get_binding_desc(void)
 {
@@ -545,6 +559,83 @@ VkShaderModule create_shader_module(char *code, u32 size)
 	return shader_module;
 }
 
+internal void create_descriptor_sets()
+{ //in our case we make one descriptor set for each swapchain image with the same layout
+    VkDescriptorSetLayout *layouts=malloc(sizeof(VkDescriptorSetLayout)*swapchain_image_count);
+    for (u32 i = 0; i < swapchain_image_count; ++i)
+        layouts[i] = descriptor_set_layout;
+
+    VkDescriptorSetAllocateInfo alloc_info = {0};
+    alloc_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+    alloc_info.descriptorPool = descriptor_pool;
+    alloc_info.descriptorSetCount = swapchain_image_count;
+    alloc_info.pSetLayouts = layouts;
+
+    descriptor_sets = malloc(sizeof(VkDescriptorSet) * swapchain_image_count);
+    if (vkAllocateDescriptorSets(device, &alloc_info, descriptor_sets)!=VK_SUCCESS)
+        printf("Failed to allocate descriptor sets!\n");
+
+    for(u32 i = 0; i < swapchain_image_count; ++i)
+    {
+        //we declare the data we want to pass to the descriptor
+        VkDescriptorBufferInfo buf_info = {0};
+        buf_info.buffer = uniform_buffers[i];
+        buf_info.offset = 0;
+        buf_info.range = sizeof(UniformBufferObject);
+        
+        //we update the descriptors contents
+        VkWriteDescriptorSet descriptor_write = {0};
+        descriptor_write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        descriptor_write.dstSet = descriptor_sets[i];
+        descriptor_write.dstBinding = 0;
+        descriptor_write.dstArrayElement = 0;
+        descriptor_write.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+        descriptor_write.descriptorCount = 1;
+        descriptor_write.pBufferInfo = &buf_info;
+        descriptor_write.pImageInfo = NULL;
+        descriptor_write.pTexelBufferView = NULL;
+
+        vkUpdateDescriptorSets(device, 1, &descriptor_write, 0, NULL);
+    }
+
+}
+
+internal void create_descriptor_pool()
+{
+    VkDescriptorPoolSize pool_size = {0};
+    pool_size.type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    pool_size.descriptorCount = swapchain_image_count;
+
+    VkDescriptorPoolCreateInfo pool_info = {0};
+    pool_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+    pool_info.poolSizeCount = 1;
+    pool_info.pPoolSizes = &pool_size;
+    pool_info.maxSets = swapchain_image_count;
+    if (vkCreateDescriptorPool(device, &pool_info, NULL, &descriptor_pool) != VK_SUCCESS)
+        printf("Uh-Oh! Couldnt create descriptor pool!\n");
+}
+
+internal void create_descriptor_set_layout()
+{
+    //We make each binding (UBO) for our shaders
+    VkDescriptorSetLayoutBinding ubo_layout_binding = {0};
+    ubo_layout_binding.binding = 0;
+    ubo_layout_binding.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    ubo_layout_binding.descriptorCount = 1;
+    ubo_layout_binding.stageFlags = VK_SHADER_STAGE_ALL_GRAPHICS;
+    ubo_layout_binding.pImmutableSamplers = NULL;
+
+    //We combine all descriptor bingins in a descriptor SET layout
+    VkDescriptorSetLayoutCreateInfo layout_info = {0};
+    layout_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+    layout_info.bindingCount = 1;
+    layout_info.pBindings = &ubo_layout_binding;
+
+    if (vkCreateDescriptorSetLayout(device, &layout_info, NULL, &descriptor_set_layout)
+           != VK_SUCCESS)
+        printf("Failed to create descriptor set layout!\n");
+}
+
 internal void create_graphics_pipeline()
 {
 	
@@ -671,12 +762,11 @@ internal void create_graphics_pipeline()
 	dynamic_state.pDynamicStates = dynamic_states;
 	
 	//---Pipeline Layout--- (for uniforms??)
-	pipeline_layout;
 	
 	VkPipelineLayoutCreateInfo pipeline_layout_info ={0};
 	pipeline_layout_info.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-	pipeline_layout_info.setLayoutCount = 0;
-	pipeline_layout_info.pSetLayouts = NULL;
+	pipeline_layout_info.setLayoutCount = 1;
+	pipeline_layout_info.pSetLayouts = &descriptor_set_layout;
 	pipeline_layout_info.pushConstantRangeCount = 0;
 	pipeline_layout_info.pPushConstantRanges = NULL;
 	
@@ -853,6 +943,22 @@ internal void create_index_buffer()
     vkUnmapMemory(device, index_buffer_memory);
 }
 
+//We need to make one Uniform buffer per swapchain image (in our case 2-3)
+internal void create_uniform_buffer()
+{
+    uniform_buffers = malloc(sizeof(VkBuffer) * swapchain_image_count);
+    uniform_buffers_memory = malloc(sizeof(VkDeviceMemory) * swapchain_image_count);
+
+    VkDeviceSize buf_size = sizeof(UniformBufferObject);
+
+    for (u32 i = 0; i < swapchain_image_count; ++i)
+    { 
+        create_buffer(buf_size, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, 
+            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+            &uniform_buffers[i], &uniform_buffers_memory[i]);
+    }
+
+}
 
 internal void create_command_pool()
 {
@@ -906,6 +1012,8 @@ internal void create_command_buffers()
         VkDeviceSize offsets[] = {0};
         vkCmdBindVertexBuffers(command_buffers[i], 0, 1, vertex_buffers, offsets);
         vkCmdBindIndexBuffer(command_buffers[i], index_buffer, 0, VK_INDEX_TYPE_UINT32);
+        vkCmdBindDescriptorSets(command_buffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, 
+                pipeline_layout, 0, 1, &descriptor_sets[i], 0, NULL);
 		//[5]: We draw our vertices
 		vkCmdDrawIndexed(command_buffers[i], array_count(indices),1,0,0,0);
 		//[6]: We end the render pass, and stop captuing the command buffer, we are done!
@@ -953,6 +1061,7 @@ internal void create_sync_objects()
 //this is so we can recreate our swapchain (e.g when resizing a window)
 internal void cleanup_swapchain(void)
 {
+    
 	for (u32 i = 0; i < swapchain_image_count; ++i)
 		vkDestroyFramebuffer(device, swapchain_framebuffers[i], NULL);
 	
@@ -961,13 +1070,21 @@ internal void cleanup_swapchain(void)
 	vkDestroyPipeline(device, graphics_pipeline, NULL);
 	vkDestroyPipelineLayout(device, pipeline_layout, NULL);
 	vkDestroyRenderPass(device, render_pass, NULL);
-	
+
+	for (u32 i = 0; i < swapchain_image_count; ++i)
+    {
+        vkDestroyBuffer(device, uniform_buffers[i], NULL);
+        vkFreeMemory(device, uniform_buffers_memory[i], NULL);
+    }
+
 	for (u32 i = 0; i< swapchain_image_count; ++i)
 		vkDestroyImageView(device, swapchain_image_views[i], NULL);
 	vkDestroySwapchainKHR(device, swap_chain, NULL);
 	
 	vkDestroyShaderModule(device, frag_shader_module, NULL);
 	vkDestroyShaderModule(device, vert_shader_module, NULL);
+
+    vkDestroyDescriptorPool(device, descriptor_pool, NULL);
 }
 
 
@@ -982,6 +1099,9 @@ internal void recreate_swapchain()
 	create_render_pass();
 	create_graphics_pipeline();
 	create_framebuffers();
+    create_uniform_buffer();
+    create_descriptor_pool();
+    create_descriptor_sets();
 	create_command_buffers();
 	
 }
@@ -1002,7 +1122,7 @@ internal void draw_frame()
 	}
 	
 	
-	//[2]: We submit the command buffer (we have pre-created a command buffer dor every swapchain attachment)
+	//[2]: We submit the command buffer (we have pre-created a command buffer for every swapchain attachment)
 	VkSubmitInfo submit_info = {0};
 	submit_info.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
 
@@ -1048,6 +1168,22 @@ internal void draw_frame()
 		framebuffer_resized = FALSE;
 		recreate_swapchain();
 	}
+
+
+    { //fill the UBO!
+        //[0]: make the new data
+        UniformBufferObject ubo = {0};
+        ubo.proj = perspective_proj(45.f, swapchain_extent.width / (f32)swapchain_extent.height, 0.1f, 10.0f);
+        ubo.view = look_at(v3(0,0,3), v3(0,0,0), v3(0,1,0));
+        ubo.model= mat4_rotate(14* sin(4.0f * glfwGetTime()), v3(0,1,0));
+
+        //[1]: update the uniform buffer to the new data
+        void *ubo_data;
+        vkMapMemory(device, uniform_buffers_memory[image_index], 0, 
+                sizeof(ubo), 0, &ubo_data);
+        memcpy(ubo_data, &ubo, sizeof(ubo));
+        vkUnmapMemory(device, uniform_buffers_memory[image_index]);
+    }
 	
 	current_frame = (current_frame+1) % MAX_FRAMES_IN_FLIGHT;
 }
@@ -1074,13 +1210,18 @@ internal int vulkan_init()
 	create_swapchain();
 	create_image_views();
 	create_render_pass();
-	create_graphics_pipeline();
+    create_descriptor_set_layout();
+    create_graphics_pipeline();
 	create_framebuffers();
 	create_command_pool();
     create_vertex_buffer();
     create_index_buffer();
+    create_uniform_buffer();
+    create_descriptor_pool();
+    create_descriptor_sets();
 	create_command_buffers();
 	create_sync_objects();
+
 	return TRUE;
 }
 
@@ -1100,6 +1241,7 @@ internal void main_loop(void)
 internal void cleanup(void)
 {
 	cleanup_swapchain();
+    vkDestroyDescriptorSetLayout(device, descriptor_set_layout, NULL);
     vkDestroyBuffer(device, vertex_buffer, NULL);
     vkFreeMemory(device, vertex_buffer_memory, NULL);
     vkDestroyBuffer(device, index_buffer, NULL);
