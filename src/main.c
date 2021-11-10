@@ -74,6 +74,13 @@ VkSemaphore *render_finished_semaphores;
 VkFence *in_flight_fences;
 VkFence *images_in_flight;
 
+//[SPEC]: Linear array of data which are used for various purposes by binding them to a pipeline via descriptor sets 
+VkBuffer vertex_buffer;
+//[SPEC]: A Vulkan device operates on data in device memory via memory objects
+VkDeviceMemory vertex_buffer_memory;
+VkBuffer index_buffer;
+VkDeviceMemory index_buffer_memory;
+
 global current_frame = 0;
 global framebuffer_resized = FALSE;
 
@@ -89,6 +96,41 @@ const char *validation_layers[]= {
 
 const char *device_extensions[] = {VK_KHR_SWAPCHAIN_EXTENSION_NAME}; 
 
+typedef struct TestVertex
+{
+    vec2 pos;
+    vec3 color;
+}TestVertex;
+
+TestVertex vertices[] = {
+    {{-0.5f, -0.5f},{0.0f, 0.3f, 1.0f}},
+    {{0.5f, -0.5f},{0.7f, 0.2f, 0.0f}},
+    {{0.5f, 0.5f},{1.0f, 0.8f, 0.1f}},
+    {{-0.5f, 0.5f},{0.0f, 0.1f, 1.0f}},
+};
+u16 indices[] = {0,1,2,2,3,0};
+
+//return the binding description of TestVertex type vertex input
+internal VkVertexInputBindingDescription get_bind_desc_test_vert(void)
+{
+    VkVertexInputBindingDescription bind_desc = {0};
+    bind_desc.binding = 0;
+    bind_desc.stride = sizeof(TestVertex);
+    bind_desc.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;//per-vertex
+    return bind_desc;
+}
+
+internal void get_attr_desc_test_vert(VkVertexInputAttributeDescription *attr_desc)
+{
+    attr_desc[0].binding = 0;
+    attr_desc[0].location = 0;
+    attr_desc[0].format = VK_FORMAT_R32G32_SFLOAT;
+    attr_desc[0].offset = offsetof(TestVertex, pos);
+    attr_desc[1].binding = 0;
+    attr_desc[1].location = 1;
+    attr_desc[1].format = VK_FORMAT_R32G32B32_SFLOAT;
+    attr_desc[1].offset = offsetof(TestVertex, color);
+}
 
 typedef struct SwapChainSupportDetails
 {
@@ -197,8 +239,10 @@ internal void create_instance(void) {
 	vkEnumerateInstanceExtensionProperties(NULL, &ext_count, NULL);
 	VkExtensionProperties *extensions = malloc(sizeof(VkExtensionProperties) * ext_count);
 	vkEnumerateInstanceExtensionProperties(NULL, &ext_count, extensions);
+    /*
 	for (u32 i = 0; i < ext_count; ++i)
 		printf("EXT: %s\n", extensions[i]);
+    */
 }
 
 
@@ -477,8 +521,8 @@ internal void create_graphics_pipeline(void)
 	
 	//read the spirv files as binary files
 	u32 vert_size, frag_size;
-	//char *vert_shader_code = read_whole_file_binary("vert.spv", &vert_size);
-	char *vert_shader_code = read_whole_file_binary("fullscreen.spv", &vert_size);
+	char *vert_shader_code = read_whole_file_binary("vert.spv", &vert_size);
+	//char *vert_shader_code = read_whole_file_binary("fullscreen.spv", &vert_size);
 	char *frag_shader_code = read_whole_file_binary("frag.spv", &frag_size);
 	
 	//make shader modules out of those
@@ -499,12 +543,16 @@ internal void create_graphics_pipeline(void)
     VkPipelineShaderStageCreateInfo shader_stages[] = {vert_shader_stage_info, frag_shader_stage_info};
 
     //---VERTEX INPUT---
+    VkVertexInputBindingDescription bind_desc = get_bind_desc_test_vert();
+    VkVertexInputAttributeDescription attr_desc[2];
+    get_attr_desc_test_vert(attr_desc);
+
     VkPipelineVertexInputStateCreateInfo vertex_input_info = {0};
     vertex_input_info.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
-    vertex_input_info.vertexBindingDescriptionCount = 0;
-    vertex_input_info.pVertexBindingDescriptions = NULL;
-    vertex_input_info.vertexAttributeDescriptionCount = 0;
-    vertex_input_info.pVertexAttributeDescriptions = NULL;
+    vertex_input_info.vertexBindingDescriptionCount = 1;//we have 1 vertex description 
+    vertex_input_info.pVertexBindingDescriptions = &bind_desc;
+    vertex_input_info.vertexAttributeDescriptionCount = 2; //with 2 different attributes
+    vertex_input_info.pVertexAttributeDescriptions = attr_desc;
 
     //---INPUT ASSEMBLY---
     VkPipelineInputAssemblyStateCreateInfo input_asm_info = {0};
@@ -733,12 +781,86 @@ internal void create_command_buffers(void)
         vkCmdBeginRenderPass(command_buffers[i], &renderpass_info, VK_SUBPASS_CONTENTS_INLINE);
 
         vkCmdBindPipeline(command_buffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, graphics_pipeline);
-        vkCmdDraw(command_buffers[i], 3, 1, 0, 0);
+
+        VkBuffer vertex_buffers[] = {vertex_buffer};
+        VkDeviceSize offsets[] = {0};
+        vkCmdBindVertexBuffers(command_buffers[i], 0, 1, vertex_buffers, offsets);
+        vkCmdBindIndexBuffer(command_buffers[i], index_buffer, 0, VK_INDEX_TYPE_UINT16);
+
+        vkCmdDrawIndexed(command_buffers[i], array_count(indices), 1, 0, 0, 0);
         vkCmdEndRenderPass(command_buffers[i]);
         if (vkEndCommandBuffer(command_buffers[i]) != VK_SUCCESS)
             vk_error("Failed to record command buffer!");
     }
 }
+
+internal u32 find_mem_type(u32 type_filter, VkMemoryPropertyFlags properties)
+{
+    VkPhysicalDeviceMemoryProperties mem_properties;
+    vkGetPhysicalDeviceMemoryProperties(physical_device, &mem_properties);
+    for (u32 i = 0; i < mem_properties.memoryTypeCount; ++i)
+    {
+        if (type_filter & (1 << i) && 
+                (mem_properties.memoryTypes[i].propertyFlags & properties) == properties)
+            return i;
+    }
+    vk_error("Failed to find suitable memory type!");
+}
+internal void create_vertex_buffer(void)
+{
+    VkBufferCreateInfo buffer_info = {0};
+    buffer_info.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+    buffer_info.size = sizeof(vertices[0]) * array_count(vertices);
+    buffer_info.usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
+    buffer_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    if (vkCreateBuffer(device, &buffer_info, NULL, &vertex_buffer)!=VK_SUCCESS)
+        vk_error("Failed to create vertex buffer!");
+
+    VkMemoryRequirements mem_req = {0};
+    vkGetBufferMemoryRequirements(device, vertex_buffer, &mem_req);
+
+    VkMemoryAllocateInfo alloc_info = {0};
+    alloc_info.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    alloc_info.allocationSize = mem_req.size;
+    alloc_info.memoryTypeIndex = find_mem_type(mem_req.memoryTypeBits, 
+            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+    if (vkAllocateMemory(device, &alloc_info, NULL, &vertex_buffer_memory)!=VK_SUCCESS)
+        vk_error("Failed to allocate vertex buffer memory!");
+    vkBindBufferMemory(device, vertex_buffer, vertex_buffer_memory, 0);
+
+    void *data;
+    vkMapMemory(device, vertex_buffer_memory, 0, buffer_info.size, 0, &data);
+    memcpy(data, vertices, buffer_info.size);
+    vkUnmapMemory(device, vertex_buffer_memory);
+}
+internal void create_index_buffer(void)
+{
+    VkBufferCreateInfo buffer_info = {0};
+    buffer_info.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+    buffer_info.size = sizeof(indices[0]) * array_count(indices);
+    buffer_info.usage = VK_BUFFER_USAGE_INDEX_BUFFER_BIT;
+    buffer_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    if (vkCreateBuffer(device, &buffer_info, NULL, &index_buffer)!=VK_SUCCESS)
+        vk_error("Failed to create index buffer!");
+
+    VkMemoryRequirements mem_req = {0};
+    vkGetBufferMemoryRequirements(device, index_buffer, &mem_req);
+
+    VkMemoryAllocateInfo alloc_info = {0};
+    alloc_info.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    alloc_info.allocationSize = mem_req.size;
+    alloc_info.memoryTypeIndex = find_mem_type(mem_req.memoryTypeBits, 
+            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+    if (vkAllocateMemory(device, &alloc_info, NULL, &index_buffer_memory)!=VK_SUCCESS)
+        vk_error("Failed to allocate index buffer memory!");
+    vkBindBufferMemory(device, index_buffer, index_buffer_memory, 0);
+
+    void *data;
+    vkMapMemory(device, index_buffer_memory, 0, buffer_info.size, 0, &data);
+    memcpy(data, indices, buffer_info.size);
+    vkUnmapMemory(device, index_buffer_memory);
+}
+
 
 internal void create_sync_objects(void)
 {
@@ -813,6 +935,8 @@ internal int vulkan_init(void) {
 	pick_physical_device();
     create_logical_device();
     create_command_pool();
+    create_vertex_buffer();
+    create_index_buffer();
     recreate_swapchain();
     create_sync_objects();
 	return 1;
@@ -910,6 +1034,12 @@ internal void cleanup(void)
 {
     vkDeviceWaitIdle(device);  //so we dont close the window while commands are still being executed
     cleanup_swapchain();
+    //vkDestroyBuffer(device, vertex_buffer, NULL); //validation layer? @check
+    vkFreeMemory(device, vertex_buffer_memory, NULL);
+    vkDestroyBuffer(device, vertex_buffer, NULL);
+
+    vkFreeMemory(device, index_buffer_memory, NULL);
+    vkDestroyBuffer(device, index_buffer, NULL); //validation layer? @check
     for (u32 i = 0; i < MAX_FRAMES_IN_FLIGHT; ++i)
     {
         vkDestroySemaphore(device, render_finished_semaphores[i], NULL);
@@ -917,7 +1047,7 @@ internal void cleanup(void)
         vkDestroyFence(device, in_flight_fences[i], NULL);
     }
     vkDestroyCommandPool(device, command_pool, NULL);
-        vkDestroyDevice(device, NULL);
+    vkDestroyDevice(device, NULL);
     vkDestroySurfaceKHR(instance, surface, NULL);
     vkDestroyInstance(instance, NULL);
 	glfwDestroyWindow(window);

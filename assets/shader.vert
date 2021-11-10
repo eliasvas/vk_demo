@@ -1,7 +1,7 @@
 #version 450
 
-//layout(location = 0) in vec2 vertex_pos;
-//layout(location = 1) in vec3 vertex_color;
+layout(location = 0) in vec2 vertex_pos;
+layout(location = 1) in vec3 vertex_color;
 
 layout(location = 0) out vec3 fragColor;
 
@@ -24,6 +24,6 @@ vec2 positions[3] = vec2[](
 );
 void main() {
     //gl_Position = ubo.proj * ubo.view * ubo.model * vec4(vertex_pos, 0.0, 1.0);
-	gl_Position = vec4(positions[gl_VertexIndex], 0.0, 1.0);
-    fragColor = colors[gl_VertexIndex];
+	gl_Position = vec4(vertex_pos, 0.0, 1.0);
+    fragColor = vertex_color;
 }
