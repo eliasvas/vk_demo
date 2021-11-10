@@ -6,6 +6,16 @@
 #define GLFW_INCLUDE_VULKAN
 #include <glfw3.h>
 
+/*
+ -make win32 backend
+ -swapchain resizing
+ -rendering synchronization (fences)
+ -depth buffering
+ -vertex/index buffers
+ -texture sampling
+ -offscreen rendering
+ -pipeline recreation
+ */
 GLFWwindow* window; //our GLFW window!
 
 VkInstance instance; //connection between application and the vulkan library 
@@ -56,8 +66,16 @@ VkCommandPool command_pool;
 //[SPEC]: Object used to record commands which can then be submitted to a device queue for execution
 VkCommandBuffer *command_buffers;
 
-VkSemaphore image_available_semaphore;
-VkSemaphore render_finished_semaphore;
+const int MAX_FRAMES_IN_FLIGHT = 2;
+//[SPEC]: synchronization primitive that can be used to insert a dependency between queue operations/host
+VkSemaphore *image_available_semaphores;
+VkSemaphore *render_finished_semaphores;
+//[SPEC]: synchronization primitive that can be used to insert a dependency from a queue to the host
+VkFence *in_flight_fences;
+VkFence *images_in_flight;
+
+global current_frame = 0;
+global framebuffer_resized = FALSE;
 
 const char *validation_layers[]= {
     "VK_LAYER_KHRONOS_validation"
@@ -459,7 +477,8 @@ internal void create_graphics_pipeline(void)
 	
 	//read the spirv files as binary files
 	u32 vert_size, frag_size;
-	char *vert_shader_code = read_whole_file_binary("vert.spv", &vert_size);
+	//char *vert_shader_code = read_whole_file_binary("vert.spv", &vert_size);
+	char *vert_shader_code = read_whole_file_binary("fullscreen.spv", &vert_size);
 	char *frag_shader_code = read_whole_file_binary("frag.spv", &frag_size);
 	
 	//make shader modules out of those
@@ -720,13 +739,29 @@ internal void create_command_buffers(void)
             vk_error("Failed to record command buffer!");
     }
 }
-internal void create_semaphores(void)
+
+internal void create_sync_objects(void)
 {
+    image_available_semaphores = malloc(sizeof(VkSemaphore) * MAX_FRAMES_IN_FLIGHT);
+    render_finished_semaphores = malloc(sizeof(VkSemaphore) * MAX_FRAMES_IN_FLIGHT);
+    in_flight_fences = malloc(sizeof(VkFence) * MAX_FRAMES_IN_FLIGHT);
+    images_in_flight = malloc(sizeof(VkFence) * swapchain_image_count);
+    for (u32 i = 0; i < swapchain_image_count; ++i)images_in_flight[i] = VK_NULL_HANDLE;
+
     VkSemaphoreCreateInfo semaphore_info = {0};
     semaphore_info.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
-    if (vkCreateSemaphore(device, &semaphore_info, NULL, &image_available_semaphore)!=VK_SUCCESS | 
-            vkCreateSemaphore(device, &semaphore_info, NULL, &render_finished_semaphore)!=VK_SUCCESS)
-        vk_error("Failed to create semaphores!");
+
+    VkFenceCreateInfo fence_info = {0};
+    fence_info.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
+    fence_info.flags = VK_FENCE_CREATE_SIGNALED_BIT;
+
+    for (u32 i = 0; i < MAX_FRAMES_IN_FLIGHT; ++i)
+    {
+        if (vkCreateSemaphore(device, &semaphore_info, NULL, &image_available_semaphores[i])!=VK_SUCCESS || 
+                vkCreateSemaphore(device, &semaphore_info, NULL, &render_finished_semaphores[i])!=VK_SUCCESS ||
+                vkCreateFence(device, &fence_info, NULL, &in_flight_fences[i]) != VK_SUCCESS)
+            vk_error("Failed to create sync objects for some frame!");
+    }
 }
 
 internal void create_surface(void)
@@ -735,43 +770,84 @@ internal void create_surface(void)
         vk_error("Failed to create window surface!");
 }
 
-internal void framebuffer_resize_callback(){}
+internal void framebuffer_resize_callback(void){framebuffer_resized = TRUE;}
 
-internal int vulkan_init(void) {
-	create_instance();
-    create_surface();
-	pick_physical_device();
-    create_logical_device();
+internal void cleanup_swapchain(void)
+{
+    for (u32 i = 0; i < swapchain_image_count; ++i)
+        vkDestroyFramebuffer(device, swapchain_framebuffers[i], NULL);
+    //vkFreeCommandBuffers(device, command_pool, swapchain_image_count, command_buffers);
+    vkDestroyPipeline(device, graphics_pipeline, NULL);
+    vkDestroyPipelineLayout(device, pipeline_layout, NULL);
+    vkDestroyRenderPass(device, render_pass, NULL);
+    for (u32 i = 0; i < swapchain_image_count; ++i)
+        vkDestroyImageView(device, swapchain_image_views[i], NULL);
+    vkDestroySwapchainKHR(device, swapchain, NULL);
+    //these will be recreated at pipeline creation for next swapchain
+    vkDestroyShaderModule(device, vert_shader_module, NULL);
+    vkDestroyShaderModule(device, frag_shader_module, NULL);
+}
+
+internal void recreate_swapchain(void)
+{
+    //in case of window minimization (w = 0, h = 0) we wait until we get a proper window again
+    i32 width = 0, height = 0;
+    glfwGetFramebufferSize(window, &width, &height);
+    while (width == 0 || height == 0) {
+        glfwGetFramebufferSize(window, &width, &height);
+        glfwWaitEvents();
+    } 
+
+    vkDeviceWaitIdle(device);
+    cleanup_swapchain();
     create_swapchain();
     create_image_views();
     create_render_pass();
     create_graphics_pipeline();
     create_framebuffers();
-    create_command_pool();
     create_command_buffers();
-    create_semaphores();
+}
+internal int vulkan_init(void) {
+	create_instance();
+    create_surface();
+	pick_physical_device();
+    create_logical_device();
+    create_command_pool();
+    recreate_swapchain();
+    create_sync_objects();
 	return 1;
 }
 
 internal void draw_frame(void)
 {
+    vkWaitForFences(device, 1, &in_flight_fences[current_frame], VK_TRUE, UINT64_MAX);
     //[0]: Acquire free image from the swapchain
     u32 image_index;
-    vkAcquireNextImageKHR(device, swapchain, UINT64_MAX, image_available_semaphore, VK_NULL_HANDLE, &image_index);
-    //[1]: Execure the command buffer with that image as atthachment in the framebuffer
+    VkResult res = vkAcquireNextImageKHR(device, swapchain, UINT64_MAX, 
+            image_available_semaphores[current_frame], VK_NULL_HANDLE, &image_index);
+    if (res == VK_ERROR_OUT_OF_DATE_KHR){recreate_swapchain();return;}
+    else if (res != VK_SUCCESS && res != VK_SUBOPTIMAL_KHR)vk_error("Failed to acquire swapchain image!");
+
+    // check if the image is already used (in flight) froma previous frame, and if so wait
+    if (images_in_flight[image_index] != VK_NULL_HANDLE)vkWaitForFences(device, 1, &images_in_flight[image_index], VK_TRUE, UINT64_MAX);
+    //mark image as used by _this frame_
+    images_in_flight[image_index] = in_flight_fences[current_frame];
+
+    //[1]: Execute the command buffer with that image as attachment in the framebuffer
     VkSubmitInfo submit_info = {0};
     submit_info.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
-    VkSemaphore wait_semaphores[] = {image_available_semaphore};
+    VkSemaphore wait_semaphores[] = {image_available_semaphores[current_frame]};
     VkPipelineStageFlags wait_stages[] = {VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT};
     submit_info.waitSemaphoreCount = 1;
     submit_info.pWaitSemaphores = wait_semaphores;
     submit_info.pWaitDstStageMask = wait_stages;
     submit_info.commandBufferCount = 1;
     submit_info.pCommandBuffers = &command_buffers[image_index];
-    VkSemaphore signal_semaphores[] = {render_finished_semaphore};
+    VkSemaphore signal_semaphores[] = {render_finished_semaphores[current_frame]};
     submit_info.signalSemaphoreCount = 1;
     submit_info.pSignalSemaphores = signal_semaphores;
-    if (vkQueueSubmit(graphics_queue, 1, &submit_info, VK_NULL_HANDLE)!=VK_SUCCESS)
+    vkResetFences(device, 1, &in_flight_fences[current_frame]);
+    if (vkQueueSubmit(graphics_queue, 1, &submit_info, in_flight_fences[current_frame])!=VK_SUCCESS)
         vk_error("Failed to submit draw command buffer!");
     //[2]: Return the image to the swapchain for presentation
     VkPresentInfoKHR present_info = {0};
@@ -784,36 +860,64 @@ internal void draw_frame(void)
     present_info.pSwapchains = swapchains;
     present_info.pImageIndices = &image_index;
     present_info.pResults = NULL;
-    
-    vkQueuePresentKHR(present_queue, &present_info);
+
+    //we push the data to be presented to the present queue
+    res = vkQueuePresentKHR(present_queue, &present_info); 
+
+    //recreate swapchain if necessary
+    if (res == VK_ERROR_OUT_OF_DATE_KHR || res == VK_SUBOPTIMAL_KHR || framebuffer_resized)
+    {
+        framebuffer_resized = FALSE;
+        recreate_swapchain();
+    }
+    else if (res != VK_SUCCESS)
+        vk_error("Failed to present swapchain image!");
+
+    current_frame = (current_frame+1) % MAX_FRAMES_IN_FLIGHT;
 }
 
+global f32 nb_frames = 0.0f;
+global f32 current_time = 0.0f;
+global f32 prev_time = 0.0f;
+internal void calc_fps(void)
+{
+    f32 current_time = glfwGetTime();
+    f32 delta = current_time - prev_time;
+    nb_frames++;
+    if ( delta >= 1.0f){
+         f32 fps = nb_frames / delta;
+         char frames[256];
+         sprintf(frames, "FPS: %f", fps);
+         glfwSetWindowTitle(window, frames);
+
+         nb_frames = 0;
+         prev_time = current_time;
+    }
+}
 internal void main_loop(void) 
 {
-
+    
 	while (!glfwWindowShouldClose(window)) {
+        calc_fps();
 		glfwPollEvents();
         draw_frame();
 	}
-    vkDeviceWaitIdle(device);
+
+    //vkDeviceWaitIdle(device);
 }
 
 internal void cleanup(void) 
 {
-    vkDestroySemaphore(device, render_finished_semaphore, NULL);
-    vkDestroySemaphore(device, image_available_semaphore, NULL);
+    vkDeviceWaitIdle(device);  //so we dont close the window while commands are still being executed
+    cleanup_swapchain();
+    for (u32 i = 0; i < MAX_FRAMES_IN_FLIGHT; ++i)
+    {
+        vkDestroySemaphore(device, render_finished_semaphores[i], NULL);
+        vkDestroySemaphore(device, image_available_semaphores[i], NULL);
+        vkDestroyFence(device, in_flight_fences[i], NULL);
+    }
     vkDestroyCommandPool(device, command_pool, NULL);
-    for (u32 i = 0; i < swapchain_image_count; ++i)
-        vkDestroyFramebuffer(device, swapchain_framebuffers[i], NULL);
-    vkDestroyPipeline(device, graphics_pipeline, NULL);
-    vkDestroyPipelineLayout(device, pipeline_layout, NULL);
-    vkDestroyRenderPass(device, render_pass, NULL);
-    vkDestroyShaderModule(device, vert_shader_module, NULL);
-    vkDestroyShaderModule(device, frag_shader_module, NULL);
-    for (u32 i = 0; i < swapchain_image_count; ++i)
-        vkDestroyImageView(device, swapchain_image_views[i], NULL);
-    vkDestroySwapchainKHR(device, swapchain, NULL);
-    vkDestroyDevice(device, NULL);
+        vkDestroyDevice(device, NULL);
     vkDestroySurfaceKHR(instance, surface, NULL);
     vkDestroyInstance(instance, NULL);
 	glfwDestroyWindow(window);
@@ -829,7 +933,7 @@ int main(void) {
 
 
 	if(vulkan_init())
-		printf("Hello Vulkan!");
+		printf("Vulkan OK");
 	
 	main_loop();
 	
