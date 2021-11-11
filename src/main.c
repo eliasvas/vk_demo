@@ -6,12 +6,13 @@
 #define GLFW_INCLUDE_VULKAN
 #include <glfw3.h>
 
+#define WIDTH 800
+#define HEIGHT 600
+
 /*
  -make win32 backend
- -swapchain resizing
- -rendering synchronization (fences)
+ -fix swapchain resizing
  -depth buffering
- -vertex/index buffers
  -texture sampling
  -offscreen rendering
  -pipeline recreation
@@ -54,7 +55,11 @@ VkShaderModule frag_shader_module;
 //[SPEC]: A collection of attachments, subpasses, and dependencies between the subpasses
 VkRenderPass render_pass; //we need to _begin_ a render pass at the start of rendering and _end_ before submitting to Queue
 
-//[SPEC]: Acess to descriptor sets from a pipeline is accompished through a pipeline layout 
+//[SPEC]:
+VkDescriptorSetLayout descriptor_set_layout;
+
+
+//[SPEC]: Access to descriptor sets from a pipeline is accompished through a pipeline layout 
 VkPipelineLayout pipeline_layout;
 
 //[SPEC]: An object that encompasses the configuration of the entire GPU for the draw
@@ -62,6 +67,9 @@ VkPipeline graphics_pipeline;
 
 //[SPEC]: Objects from which _command buffer memory_ is allocated from
 VkCommandPool command_pool;
+
+VkDescriptorPool descriptor_pool;
+VkDescriptorSet *descriptor_sets;
 
 //[SPEC]: Object used to record commands which can then be submitted to a device queue for execution
 VkCommandBuffer *command_buffers;
@@ -81,6 +89,9 @@ VkDeviceMemory vertex_buffer_memory;
 VkBuffer index_buffer;
 VkDeviceMemory index_buffer_memory;
 
+VkDeviceMemory *uniform_buffer_memories;
+VkBuffer *uniform_buffers;
+
 global current_frame = 0;
 global framebuffer_resized = FALSE;
 
@@ -95,6 +106,14 @@ const char *validation_layers[]= {
 #endif
 
 const char *device_extensions[] = {VK_KHR_SWAPCHAIN_EXTENSION_NAME}; 
+
+
+typedef struct UniformBufferObject
+{
+    mat4 model;
+    mat4 view;
+    mat4 proj;
+}UniformBufferObject;
 
 typedef struct TestVertex
 {
@@ -355,6 +374,7 @@ internal VkSurfaceFormatKHR choose_swap_surface_format(SwapChainSupportDetails d
 internal VkPresentModeKHR choose_swap_present_mode(SwapChainSupportDetails details)
 {
     return VK_PRESENT_MODE_FIFO_KHR;
+    //return VK_PRESENT_MODE_IMMEDIATE_KHR;
 }
 
 internal VkExtent2D choose_swap_extent(SwapChainSupportDetails details)
@@ -432,6 +452,7 @@ internal void create_swapchain(void)
     swapchain_image_format = surface_format.format;
     swapchain_extent = extent;
     swapchain_image_count = image_count;//TODO(ilias): check
+    //printf("new swapchain size: %i\n", image_count);
 }
 
 internal void create_image_views(void)
@@ -513,6 +534,75 @@ internal VkShaderModule create_shader_module(char *code, u32 size)
 	if (vkCreateShaderModule(device, &create_info, NULL, &shader_module) != VK_SUCCESS)
 		vk_error("Error creating some shader!");
 	return shader_module;
+}
+
+internal void create_descriptor_sets(void)
+{
+        VkDescriptorSetLayout *layouts = malloc(sizeof(VkDescriptorSetLayout)*swapchain_image_count);
+        for (u32 i = 0; i < swapchain_image_count; ++i)
+            layouts[i] = descriptor_set_layout;
+        VkDescriptorSetAllocateInfo alloc_info = {0};
+        alloc_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+        alloc_info.descriptorPool = descriptor_pool;
+        alloc_info.descriptorSetCount = swapchain_image_count;
+        alloc_info.pSetLayouts = layouts;
+
+        descriptor_sets = malloc(sizeof(VkDescriptorSet) * swapchain_image_count);
+        if (vkAllocateDescriptorSets(device, &alloc_info, descriptor_sets) != VK_SUCCESS) {
+            vk_error("Failed to allocate descriptor sets!");
+        }
+
+        for (size_t i = 0; i < swapchain_image_count; i++) {
+            VkDescriptorBufferInfo buffer_info = {0};
+            buffer_info.buffer = uniform_buffers[i];
+            buffer_info.offset = 0;
+            buffer_info.range = sizeof(UniformBufferObject);
+
+            VkWriteDescriptorSet descriptor_write = {0};
+            descriptor_write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            descriptor_write.dstSet = descriptor_sets[i];
+            descriptor_write.dstBinding = 0;
+            descriptor_write.dstArrayElement = 0;
+            descriptor_write.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+            descriptor_write.descriptorCount = 1;
+            descriptor_write.pBufferInfo = &buffer_info;
+
+            vkUpdateDescriptorSets(device, 1, &descriptor_write, 0, NULL);
+        }
+}
+internal void create_descriptor_pool(void)
+{
+    VkDescriptorPoolSize pool_size = {0};
+    pool_size.type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    pool_size.descriptorCount = swapchain_image_count;
+
+    VkDescriptorPoolCreateInfo pool_info = {0};
+    pool_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+    pool_info.poolSizeCount = 1;
+    pool_info.pPoolSizes = &pool_size;
+    pool_info.maxSets = swapchain_image_count;
+
+    if (vkCreateDescriptorPool(device, &pool_info, NULL, &descriptor_pool)!=VK_SUCCESS)
+        vk_error("Failed to create descriptor pool!");
+}
+
+internal void create_descriptor_set_layout(u32 buf_count, u32 binding, VkDescriptorSetLayout *layout)
+{
+    VkDescriptorSetLayoutBinding ubo_layout_binding = {0};
+    ubo_layout_binding.binding = binding;
+    ubo_layout_binding.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
+    ubo_layout_binding.descriptorCount = buf_count; //N if we want an array of descriptors (dset?)
+    ubo_layout_binding.stageFlags = VK_SHADER_STAGE_ALL_GRAPHICS;
+    ubo_layout_binding.pImmutableSamplers = NULL;
+
+    VkDescriptorSetLayoutCreateInfo layout_info = {0};
+    layout_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+    layout_info.bindingCount = 1;
+    layout_info.pBindings = &ubo_layout_binding;
+
+    if (vkCreateDescriptorSetLayout(device, &layout_info, NULL, layout) != VK_SUCCESS)
+        vk_error("Failed to create a valid descriptor set layout!");
+
 }
 
 internal void create_graphics_pipeline(void)
@@ -637,8 +727,8 @@ internal void create_graphics_pipeline(void)
     ///---PIPELINE LAYOUT--- (for uniform and push values referenced by shaders)
     VkPipelineLayoutCreateInfo pipeline_layout_info = {0};
     pipeline_layout_info.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-    pipeline_layout_info.setLayoutCount = 0;
-    pipeline_layout_info.pSetLayouts = NULL;
+    pipeline_layout_info.setLayoutCount = 1;
+    pipeline_layout_info.pSetLayouts = &descriptor_set_layout;
     pipeline_layout_info.pushConstantRangeCount = 0;
     pipeline_layout_info.pPushConstantRanges = NULL;
     if (vkCreatePipelineLayout(device, &pipeline_layout_info, NULL, &pipeline_layout) != VK_SUCCESS)
@@ -787,6 +877,8 @@ internal void create_command_buffers(void)
         vkCmdBindVertexBuffers(command_buffers[i], 0, 1, vertex_buffers, offsets);
         vkCmdBindIndexBuffer(command_buffers[i], index_buffer, 0, VK_INDEX_TYPE_UINT16);
 
+        vkCmdBindDescriptorSets(command_buffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, 
+                pipeline_layout, 0, 1, &descriptor_sets[i], 0, NULL);
         vkCmdDrawIndexed(command_buffers[i], array_count(indices), 1, 0, 0, 0);
         vkCmdEndRenderPass(command_buffers[i]);
         if (vkEndCommandBuffer(command_buffers[i]) != VK_SUCCESS)
@@ -806,6 +898,29 @@ internal u32 find_mem_type(u32 type_filter, VkMemoryPropertyFlags properties)
     }
     vk_error("Failed to find suitable memory type!");
 }
+
+internal void create_buffer(u32 buffer_size,VkBufferUsageFlagBits usage, VkMemoryPropertyFlagBits mem_flags, VkBuffer *buf, VkDeviceMemory *mem)
+{
+    VkBufferCreateInfo buffer_info = {0};
+    buffer_info.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+    buffer_info.size = buffer_size;
+    buffer_info.usage = usage;
+    buffer_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    if (vkCreateBuffer(device, &buffer_info, NULL, buf)!=VK_SUCCESS)
+        vk_error("Failed to create vertex buffer!");
+
+    VkMemoryRequirements mem_req = {0};
+    vkGetBufferMemoryRequirements(device, *buf, &mem_req);
+
+    VkMemoryAllocateInfo alloc_info = {0};
+    alloc_info.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    alloc_info.allocationSize = mem_req.size;
+    alloc_info.memoryTypeIndex = find_mem_type(mem_req.memoryTypeBits, mem_flags);
+    if (vkAllocateMemory(device, &alloc_info, NULL, mem)!=VK_SUCCESS)
+        vk_error("Failed to allocate vertex buffer memory!");
+    vkBindBufferMemory(device, *buf, *mem, 0);
+}
+
 internal void create_vertex_buffer(void)
 {
     VkBufferCreateInfo buffer_info = {0};
@@ -832,6 +947,19 @@ internal void create_vertex_buffer(void)
     vkMapMemory(device, vertex_buffer_memory, 0, buffer_info.size, 0, &data);
     memcpy(data, vertices, buffer_info.size);
     vkUnmapMemory(device, vertex_buffer_memory);
+}
+
+internal void create_uniform_buffers(void)
+{
+    VkDeviceSize buf_size = sizeof(UniformBufferObject);
+    uniform_buffers = (VkBuffer*)malloc(sizeof(VkBuffer) * swapchain_image_count);
+    uniform_buffer_memories = (VkDeviceMemory*)malloc(sizeof(VkDeviceMemory) * swapchain_image_count);
+
+    for (u32 i = 0; i < swapchain_image_count; ++i)
+    {
+        create_buffer(buf_size, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+              VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,&uniform_buffers[i], &uniform_buffer_memories[i]);
+    }
 }
 internal void create_index_buffer(void)
 {
@@ -908,6 +1036,12 @@ internal void cleanup_swapchain(void)
     //these will be recreated at pipeline creation for next swapchain
     vkDestroyShaderModule(device, vert_shader_module, NULL);
     vkDestroyShaderModule(device, frag_shader_module, NULL);
+    for (u32 i = 0; i < swapchain_image_count; ++i)
+    {
+        vkFreeMemory(device, uniform_buffer_memories[i], NULL);
+        vkDestroyBuffer(device, uniform_buffers[i], NULL);
+    }
+    vkDestroyDescriptorPool(device, descriptor_pool, NULL);
 }
 
 internal void recreate_swapchain(void)
@@ -921,10 +1055,16 @@ internal void recreate_swapchain(void)
     } 
 
     vkDeviceWaitIdle(device);
+
     cleanup_swapchain();
     create_swapchain();
     create_image_views();
     create_render_pass();
+    create_uniform_buffers();
+    create_descriptor_pool();
+    create_descriptor_sets();
+
+
     create_graphics_pipeline();
     create_framebuffers();
     create_command_buffers();
@@ -932,14 +1072,36 @@ internal void recreate_swapchain(void)
 internal int vulkan_init(void) {
 	create_instance();
     create_surface();
-	pick_physical_device();
+    pick_physical_device();
     create_logical_device();
+    create_swapchain();
+    create_image_views();
+    create_render_pass();
+    create_descriptor_set_layout(1, 0, &descriptor_set_layout);
+    create_graphics_pipeline();
+    create_framebuffers();
     create_command_pool();
     create_vertex_buffer();
     create_index_buffer();
-    recreate_swapchain();
+    create_uniform_buffers();
+    create_descriptor_pool();
+    create_descriptor_sets();
+ 
+    create_command_buffers();
     create_sync_objects();
 	return 1;
+}
+internal void update_uniform_buffer(u32 image_index)
+{
+    UniformBufferObject ubo = {0};
+    ubo.model = m4d(1.0f);
+    ubo.view = look_at(v3(1 * sin(glfwGetTime()),0,0), v3(0,0,-1), v3(0,1,0));
+    ubo.proj = perspective_proj(45.0f,WIDTH/(f32)HEIGHT, 0.1, 10);
+
+    void* data;
+    vkMapMemory(device, uniform_buffer_memories[image_index], 0, sizeof(ubo), 0, &data);
+    memcpy(data, &ubo, sizeof(ubo));
+    vkUnmapMemory(device, uniform_buffer_memories[image_index]);
 }
 
 internal void draw_frame(void)
@@ -953,7 +1115,9 @@ internal void draw_frame(void)
     else if (res != VK_SUCCESS && res != VK_SUBOPTIMAL_KHR)vk_error("Failed to acquire swapchain image!");
 
     // check if the image is already used (in flight) froma previous frame, and if so wait
-    if (images_in_flight[image_index] != VK_NULL_HANDLE)vkWaitForFences(device, 1, &images_in_flight[image_index], VK_TRUE, UINT64_MAX);
+    if (images_in_flight[image_index]!=VK_NULL_HANDLE)vkWaitForFences(device, 1, &images_in_flight[image_index], VK_TRUE, UINT64_MAX);
+    update_uniform_buffer(image_index);
+
     //mark image as used by _this frame_
     images_in_flight[image_index] = in_flight_fences[current_frame];
 
@@ -1034,6 +1198,7 @@ internal void cleanup(void)
 {
     vkDeviceWaitIdle(device);  //so we dont close the window while commands are still being executed
     cleanup_swapchain();
+    vkDestroyDescriptorSetLayout(device, descriptor_set_layout, NULL);
     //vkDestroyBuffer(device, vertex_buffer, NULL); //validation layer? @check
     vkFreeMemory(device, vertex_buffer_memory, NULL);
     vkDestroyBuffer(device, vertex_buffer, NULL);
@@ -1053,7 +1218,6 @@ internal void cleanup(void)
 	glfwDestroyWindow(window);
 	glfwTerminate();
 }
-
 int main(void) {
 	//first we initialize window stuff (GLFW)
 	glfwInit();
