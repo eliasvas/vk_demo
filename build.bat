@@ -1,7 +1,8 @@
 @echo off
 where /q cl
 if ERRORLEVEL 1 (
-    call  "C:\Program Files (x86)\Microsoft Visual Studio\2019\Community\VC\Auxiliary\Build\vcvars64.bat"
+    call  "C:\Program Files(x86)\Microsoft Visual Studio\2019\Community\VC\Auxiliary\Build\vcvars64.bat"
+    call  "C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Auxiliary\Build\vcvars64.bat"
 )
 
 set VK_PATH = C:/VulkanSDK/1.2.189.2

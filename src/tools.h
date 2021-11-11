@@ -1,7 +1,5 @@
 #ifndef TOOLS_H
 #define TOOLS_H
-//This is the main library of this startup project, it has a couple image libraries, a hash map, a
-//dynamic array sean barrett style, an arena allocator, quaternions, matrices, vectors, all that. Use at your own risk!! :)
 
 #define PLATFORM_WINDOWS  1
 #define PLATFORM_MAC      2
@@ -28,10 +26,6 @@
 #include <assert.h>
 #include <stdio.h>
 #include <math.h>
-
-#if !defined(CRTLESS)
-#define CRTLESS 0
-#endif
 
 typedef uint8_t   u8;
 typedef int8_t    i8;
@@ -62,6 +56,9 @@ typedef char      b8;
 #if !defined(FLT_MAX)
 #define FLT_MAX 32767.F
 #endif
+#if !defined(NULL)
+#define NULL 0
+#endif
 
 
 #define kilobytes(val) ((val)*1024LL)
@@ -70,70 +67,7 @@ typedef char      b8;
 #define terabytes(val) ((gigabytes(val))*1024LL)
 
 #define PI 3.1415926535897f
-#define TRUE 1
-#define FALSE 0
 
-#ifdef CRTLESS | 1 
-#define offsetof2(type, member) ((unsigned int)((unsigned char*)&((type*)0)->member - (unsigned char*)0)) 
-#define SIGN(x) ((x < 0) ? -1 : (x > 0))
-INLINE i32 abs2(i32 x)
-{
-  return x < 0 ? -x : x;
-}
-INLINE f32 fabs2(f32 x)
-{
-    return x < 0 ? -x : x;
-}
-
-
-//cos_32 computes a cosine to about 3.2 decimal digits of accuracy
-INLINE f32 
-cos_32s(f32 x)
-{
-    const float c1= 0.99940307;
-    const float c2=-0.49558072;
-    const float c3= 0.03679168;
-    float x2; // The input argument squared
-    x2= x * x;
-    return (c1 + x2*(c2 + c3 * x2));
-}
-
-//this is a horrible implementation change pls
-INLINE f32 fmodf2(f32 a, f32 b)
-{
-    f32 div = a/b;
-    i32 mod = (i32)div;
-    return (f32)mod;
-}
-INLINE f32
-cos_32(f32 x){
-    i32 quad; // what quadrant are we in?
-    x= fmodf(x,(2.f*PI)); // Get rid of values > 2* pi
-    if(x<0)x=-x; // cos(-x) = cos(x)
-    quad=(i32)(x/(PI/2.f)); // Get quadrant # (0 to 3) switch (quad){
-    switch(quad){
-        case 0: return cos_32s(x);
-        case 1: return -cos_32s(PI-x);
-        case 2: return -cos_32s(x-PI);
-        case 3: return cos_32s((2.f*PI)-x);
-        default: return cos_32s(x);
-    }
-}
-
-INLINE f32 sin_32(f32 x)
-{
-    return cos_32(PI/2.f - x);
-}
-#define sinf(x) sin_32(x)
-#define cosf(x) cos_32(x)
-INLINE f32 fmodf(f32 a, f32 b)
-{
-    f32 div = a/b;
-    i32 mod = (i32)div;
-    return (f32)mod;
-}
-
-#endif
 
 #define align_pow2(val, align) (((val) + ((align) - 1)) & ~(((val) - (val)) + (align) - 1))
 #define align4(val) (((val) + 3) & ~3)
@@ -147,18 +81,6 @@ INLINE f32 fmodf(f32 a, f32 b)
 #define clamp(x, a, b)  (maximum(a, minimum(x, b)))
 #define array_count(a) (sizeof(a) / sizeof((a)[0]))
 
-//make an ifdef for each different platform
-#define ALLOC(x) malloc(x)
-#define REALLOC(x, y) realloc(x, y)
-#define FREE(x) free(x)
-
-#ifdef SIN_APPROX
-#define SINF sin_32
-#endif
-
-#ifdef COS_APPROX
-#define COSF cos_32
-#endif
 
 
 
@@ -194,133 +116,8 @@ str_size(char* str)
     return i;
 }
 
-internal u32 
-str_sizespace(char* str)
-{
-    u32 i = 0;
-    while (str[i] != 32 || str[i] != 0)++i;
-    return i;
-}
 
-internal u32
-find_char_in_string(char *string,i32 start_index, char tofind)
-{
-    i32 iter = start_index;
-    while (string[iter] != '\0' && string[iter] != tofind) iter++;
-    return iter;
-}
 
-internal void
-seed_random()
-{
-    srand((u32)time(0));
-}
-
-//random between [-1,1]
-INLINE f32
-random(void)
-{
-    //seed_random();
-    f32 r = (f32)rand();
-	r /= RAND_MAX;
-	r = 2.0f * r - 1.0f;
-	return r;
-}
-
-INLINE f32
-random01(void)
-{
-    //seed_random();
-    f32 r = (f32)rand();
-    r /= RAND_MAX;
-    return r;
-}
-
-INLINE f32 
-rrandom(f32 lo, f32 hi)
-{
-    //seed_random();
-	f32 r = (f32)rand();
-	r /= RAND_MAX;
-	r = (hi - lo) * r + lo;
-	return r;
-}
-
-INLINE char * 
-read_whole_file_binary(char *filename, u32 *size)
-{
-    FILE *f = fopen(filename, "rb");
-	
-    fseek(f, 0, SEEK_END);
-    long fsize = ftell(f);
-	*size = fsize;
-    fseek(f, 0, SEEK_SET);  /* same as rewind(f); */
-
-    char *string = (char*)ALLOC(fsize + 1);
-    fread(string, 1, fsize, f);
-    fclose(f); 
-
-    return (char*)string;
-}
-//NOTE(ilias): maybe make a free_file because our game leaks :(
-INLINE char * 
-read_whole_file(char *filename)
-{
-    FILE *f = fopen(filename, "rb");
-    fseek(f, 0, SEEK_END);
-    long fsize = ftell(f);
-    fseek(f, 0, SEEK_SET);  /* same as rewind(f); */
-
-    char *string = (char*)ALLOC(fsize + 1);
-    fread(string, 1, fsize, f);
-    fclose(f);
-
-    string[fsize] = 0; 
-
-    return (char*)string;
-}
-INLINE u32
-get_file_size(const char *filename)
-{
-    FILE *f = fopen(filename, "rb");
-    if (!f)return 0;
-    fseek(f, 0, SEEK_END);
-    u32 fsize = ftell(f);
-    return fsize;
-}
-
-INLINE b32 
-file_exists(char* filename) {
-  b32 ret;
-  FILE* fp = fopen(filename, "rb");
-  if (fp) {
-    ret = 1;
-    fclose(fp);
-  } else {
-    ret = 0;
-  }
-
-  return ret;
-}
-
-internal i32 
-get_num_from_string(char *str)
-{
-   char num[64];
-   int k = 0;
-   i32 i = 0;
-   while (str[i] != '\0')
-   {
-      if (char_is_digit(str[i]))
-      {
-          num[k++] = str[i];
-      }else if (k > 0)break; //we only get the first number in the string
-      ++i;
-   }
-   num[k] = '\0';
-   i32 res = atoi(num);
-   return res;
-}
 
 //MATH LIB
 typedef union vec2
@@ -396,13 +193,6 @@ typedef union vec4
 typedef vec4 color4;
 typedef vec4 float4;
 
-typedef union mat3
-{
-    f32 elements[3][3];//{x.x,x.y,x.z,0,y.x,y.y,y.z,0,z.x,z.y,z.z,0,p.x,p.y,p.z,1} 
-
-    f32 raw[9]; //{x.x,x.y,x.z,0,y.x,y.y,y.z,0,z.x,z.y,z.z,0,p.x,p.y,p.z,1} 
-}mat3;
-
 typedef union mat4
 {
     f32 elements[4][4];//{x.x,x.y,x.z,0,y.x,y.y,y.z,0,z.x,z.y,z.z,0,p.x,p.y,p.z,1} 
@@ -455,6 +245,22 @@ typedef union ivec2
     i32 elements[2];
 }ivec2;
 
+INLINE ivec2 iv2(i32 x, i32 y)
+{
+    ivec2 res;
+    res.x = x;
+    res.y = y;
+    return res;
+}
+
+
+INLINE void ivec2_swap(ivec2 *l, ivec2 *r)
+{
+    ivec2 temp = *l;
+    *l = *r;
+    *r = temp;
+}
+
 
 INLINE b32 ivec3_equals(ivec3 l, ivec3 r)
 {
@@ -462,7 +268,7 @@ INLINE b32 ivec3_equals(ivec3 l, ivec3 r)
     return res;
 }
 
-INLINE f32 to_radians(f32 degrees)
+INLINE f32 to_radians(float degrees)
 {
     f32 res = degrees * (PI / 180.0f);
     return(res);
@@ -591,7 +397,7 @@ INLINE vec2 vec2_rotate(vec2 v, f32 a) {
 
 INLINE f32 vec2_length(vec2 v)
 {
-    f32 res = sqrtf(dot_vec2(v,v)); // (x^2 + y^2)^(1/2)
+    f32 res = sqrt(dot_vec2(v,v)); // (x^2 + y^2)^(1/2)
     return res;
 }
 
@@ -675,7 +481,7 @@ INLINE f32 vec3_dot(vec3 l, vec3 r)
 
 INLINE f32 vec3_length(vec3 v)
 {
-    f32 res = sqrtf(vec3_dot(v,v)); // (x^2 + y^2)^(1/2)
+    f32 res = sqrt(vec3_dot(v,v)); // (x^2 + y^2)^(1/2)
     return res;
 }
 
@@ -1133,17 +939,6 @@ INLINE mat4 mat4_inv(mat4 m)
     return inv_out;
 }
 
-
-INLINE mat3 mat4_extract_rotation(mat4 rotation_matrix)
-{
-       mat3 axes = {
-            rotation_matrix.elements[0][0],rotation_matrix.elements[0][1],rotation_matrix.elements[0][2],
-            rotation_matrix.elements[1][0],rotation_matrix.elements[1][1],rotation_matrix.elements[1][2],
-            rotation_matrix.elements[2][0],rotation_matrix.elements[2][1],rotation_matrix.elements[2][2]
-        };
-        return axes;
-}
-
 INLINE mat4 orthographic_proj(f32 l, f32 r, f32 b, f32 t, f32 n, f32 f)
 {
     mat4 res = m4();
@@ -1166,7 +961,7 @@ INLINE mat4 perspective_proj(f32 fov, f32 aspect, f32 n, f32 f)
 {
     mat4 res = m4();
 
-    f32 cot = 1.0f / tanf(fov * (PI / 360.0f));
+    f32 cot = 1.0f / tan(fov * (PI / 360.0f));
 
     res.elements[0][0] = cot / aspect;
     res.elements[1][1] = cot;
@@ -1556,7 +1351,7 @@ INLINE Quaternion quat_inv(Quaternion l)
 {
     Quaternion res;
 
-    f32 len = sqrtf(dot_quat(l,l));
+    f32 len = sqrt(dot_quat(l,l));
     res = quat_divf(l, len);
 
     return res;
@@ -1602,7 +1397,7 @@ INLINE Quaternion quat_normalize(Quaternion l)
 {
     Quaternion res;
 
-    f32 len = sqrtf(quat_dot(l,l));
+    f32 len = sqrt(quat_dot(l,l));
     res = quat_divf(l,len);
 
     return res;
@@ -1711,252 +1506,9 @@ mat4_to_quat(mat4 m)
         }
     }
 
-    Q = quat_mulf(Q, 0.5f / sqrtf(T));
+    Q = quat_mulf(Q, 0.5f / sqrt(T));
 
     return Q;
-}
-
-
-//TGA LIB 
-enum {
-    TGA_ERROR_FILE_OPEN = 1,
-    TGA_ERROR_READING_FILE,
-    TGA_ERROR_INDEXED_COLOR, 
-    TGA_ERROR_MEMORY,
-    TGA_ERROR_COMPRESSED_FILE, 
-    TGA_OK
-};
-
-typedef struct TGAInfo
-{
-    i32 status;
-    u8 type, bits_per_pixel;
-    i16 width, height;
-    u8 *image_data;
-}TGAInfo;
-
-internal TGAInfo* tga_init_image_RGB(i16 width, i16 height)
-{
-    TGAInfo* info;
-    info = (TGAInfo*)ALLOC(sizeof(TGAInfo));
-    info->width = width;
-    info->height = height;
-    info->bits_per_pixel = 24;
-    info->type = 2; 
-    info->status = TGA_OK;
-    info->image_data = (u8*)ALLOC(sizeof(u8) * width * height * (info->bits_per_pixel / 8));
-    return info;
-}
-
-internal void 
-tga_load_header(FILE *file, TGAInfo *info) {
-
-	u8 c_garbage;
-	i16 i_garbage;
-
-	fread(&c_garbage, sizeof(u8), 1, file);
-	fread(&c_garbage, sizeof(u8), 1, file);
-
-    // type must be 2 or 3
-	fread(&info->type, sizeof(u8), 1, file);
-
-	fread(&i_garbage, sizeof(i16), 1, file);
-	fread(&i_garbage, sizeof(i16), 1, file);
-	fread(&c_garbage, sizeof(u8), 1, file);
-	fread(&i_garbage, sizeof(i16), 1, file);
-	fread(&i_garbage, sizeof(i16), 1, file);
-
-	fread(&info->width, sizeof(i16), 1, file);
-	fread(&info->height, sizeof(i16), 1, file);
-	fread(&info->bits_per_pixel, sizeof(u8), 1, file);
-
-	fread(&c_garbage, sizeof(u8), 1, file);
-}
-internal void tga_load_image_data(FILE *file, TGAInfo *info) {
-
-	i32 mode,total,i;
-	u8 aux;
-
-    // mode equal the number of components for each pixel
-	mode = info->bits_per_pixel / 8;
-    // total is the number of bytes we'll have to read
-	total = info->height * info->width * mode;
-	
-	fread(info->image_data,sizeof(u8),total,file);
-
-    // mode=3 or 4 implies that the image is RGB(A). However TGA
-    // stores it as BGR(A) so we'll have to swap R and B.
-	if (mode >= 3)
-		for (i=0; i < total; i+= mode) {
-			aux = info->image_data[i];
-			info->image_data[i] = info->image_data[i+2];
-			info->image_data[i+2] = aux;
-		}
-    //flip the image
-    u8* pixels_new = (u8*)ALLOC(sizeof(u8) * info->width * info->height * (info->bits_per_pixel / 8));
-    i32 new_i = 0;
-    if (mode == 3)
-    {
-      for (i32 j = info->height - 1; j >=0; --j)
-      {
-          for (i32 i = 0; i < info->width-1; ++i)
-          {
-              i32 index = info->width * 3 *j + 3 * i;
-              u8 cmp[3];
-              pixels_new[new_i++]= (u8)(info->image_data[index]);
-              pixels_new[new_i++]= (u8)(info->image_data[index+1]);
-              pixels_new[new_i++]= (u8)(info->image_data[index+2]);
-        }
-      }
-
-    info->image_data = pixels_new;
-    }else if (mode == 4)
-    {
-     for (i32 j = info->height - 1; j >=0; --j)
-      {
-          for (i32 i = 0; i < info->width; ++i)
-          {
-              i32 index = info->width * 4 *j + 4 * i;
-              u8 cmp[3];
-              pixels_new[new_i++]= (u8)(info->image_data[index]);
-              pixels_new[new_i++]= (u8)(info->image_data[index+1]);
-              pixels_new[new_i++]= (u8)(info->image_data[index+2]);
-              pixels_new[new_i++]= (u8)(info->image_data[index+3]);
-        }
-      }
-     free(info->image_data);
-    info->image_data = pixels_new;
-    }
-}
-
-internal TGAInfo* 
-tga_load(char *filename)
-{
-    TGAInfo *info;
-    FILE* file;
-    i32 mode,total;
-
-    //allocate memory for TGAInfo
-    info = (TGAInfo*)ALLOC(sizeof(TGAInfo));
-    if(info == NULL)return(NULL);
-
-    //open file for binary reading
-    file = fopen(filename, "rb");
-    if (file == NULL)
-    {
-        info->status = TGA_ERROR_FILE_OPEN;
-        //fclose(file);
-        return info;
-    }
-
-    //we load the header and fill out neccesary info
-    tga_load_header(file, info);
-
-    //check if color indexed
-    if (info->type == 1)
-    {
-        info->status = TGA_ERROR_INDEXED_COLOR;
-        fclose(file);
-        return info;
-    }
-
-    //check if compressed
-    if ((info->type != 2) && (info->type != 3))
-    {
-       info->status = TGA_ERROR_COMPRESSED_FILE; 
-    }
-
-    mode = info->bits_per_pixel / 8;
-    total =info->height * info->width * mode;
-    info->image_data = (u8*)ALLOC(total * sizeof(u8));
-
-    //check if memory is ok
-    if (info->image_data == NULL)
-    {
-        info->status = TGA_ERROR_MEMORY;
-        fclose(file);
-        return info;
-    }
-
-    //load the fucking image
-    tga_load_image_data(file, info);
-    if (ferror(file))
-    {
-        info->status = TGA_ERROR_READING_FILE;
-        fclose(file);
-        info->status = TGA_OK;
-        return info;
-    }
-    fclose(file);
-    info->status = TGA_OK;
-
-    return info;
-}
-
-
-internal i16 
-tga_save(char *filename, i16 width, i16 height, u8 bits_per_pixel, u8 *image_data)
-{
-    u8 c_garbage = 0, type,mode, aux;
-    i16 i_garbage;
-    i32 i;
-    FILE* file;
-    file = fopen(filename, "wb");
-    if (file == NULL)
-        return TGA_ERROR_FILE_OPEN;
-    mode = bits_per_pixel / 8;
-    if ((bits_per_pixel == 24) || (bits_per_pixel == 32))
-        type = 2;
-    else
-        type = 3;
-
-    // write the header
-	fwrite(&c_garbage, sizeof(u8), 1, file);
-	fwrite(&c_garbage, sizeof(u8), 1, file);
-
-	fwrite(&type, sizeof(u8), 1, file);
-
-	fwrite(&i_garbage, sizeof(i16), 1, file);
-	fwrite(&i_garbage, sizeof(i16), 1, file);
-	fwrite(&c_garbage, sizeof(u8), 1, file);
-	fwrite(&i_garbage, sizeof(i16), 1, file);
-	fwrite(&i_garbage, sizeof(i16), 1, file);
-
-	fwrite(&width, sizeof(i16), 1, file);
-	fwrite(&height, sizeof(i16), 1, file);
-	fwrite(&bits_per_pixel, sizeof(u8), 1, file);
-
-	fwrite(&c_garbage, sizeof(u8), 1, file);
-
-
-    // convert the image data from RGB(a) to BGR(A)
-	if (mode >= 3)
-        for (i=0; i < width * height * mode ; i+= mode) {
-            aux = image_data[i];
-            image_data[i] = image_data[i+2];
-            image_data[i+2] = aux;
-        }
-
-    // save the image data
-	fwrite(image_data, sizeof(u8), width * height * mode, file);
-	fclose(file);
-	//free(image_data);
-    //image_data = NULL;
-
-	return TGA_OK;
-}
-
-internal void
-tga_destroy(TGAInfo * info)
-{
-    if (info != NULL)
-    {
-        if (info->image_data != NULL)
-            free(info->image_data);
-        free(info);
-        info = NULL;
-    }
-    
 }
 
 //MEMORY STUFF
@@ -2013,61 +1565,6 @@ arena_zero(Arena* arena)
     memset(arena->memory, 0, arena->memory_size);
 }
 
-//STRING STUFF
-
-typedef struct String
-{
-    char* data;
-    u32 len;
-    u32 size;
-    u32 max_size;
-    b32 is_constant;
-}String;
-
-internal String
-init_string_in_arena(Arena* arena, u32 size)
-{
-    String str = {0};
-
-    str.data = (char*)arena_alloc(arena, size);
-    if (str.data)
-    {
-        str.len = size - 1;
-        str.size = size;
-        str.max_size = size;
-        str.is_constant = 0;
-
-        str.data[size-1] = '\0';
-    }
-    return str;
-}
-
-internal String str(Arena* arena, char* characters)
-{
-
-    String s = init_string_in_arena(arena, str_size(characters) + 1);
-    memcpy(s.data, characters, str_size(characters) + 1);
-    return s; 
-}
-
-internal String substr(Arena* arena, char* characters, i32 start, i32 finish)
-{
-    assert(finish - start < str_size(characters));
-    assert(start < str_size(characters));
-    String s = init_string_in_arena(arena, finish - start + 1);
-    memcpy(s.data , characters + start, finish - start);
-    return s; 
-}
-
-
-
-//A stretchy buffer implementation [C99]
-
-//HOW TO USE: declare your array of prefered type as TYPE *arr = NULL;
-//then every time you need to insert something, buf_push(arr, ELEMENT);
-//if you want to access a certain element you arr[i];
-//that's all, also you can buf_free(arr);
-
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -2098,11 +1595,11 @@ internal void *buf__grow(const void *buf, u32 new_len, u32 element_size)
    BufHdr *new_hdr; 
    if(buf) 
    { 
-       new_hdr = (BufHdr*)REALLOC(buf__hdr(buf), new_size); 
+       new_hdr = (BufHdr*)realloc(buf__hdr(buf), new_size); 
    }
    else
    { 
-       new_hdr = (BufHdr*)ALLOC(new_size);
+       new_hdr = (BufHdr*)malloc(new_size);
        new_hdr->len = 0;
    }
    new_hdr->cap = new_cap;
@@ -2128,227 +1625,86 @@ internal void *buf__grow(const void *buf, u32 new_len, u32 element_size)
 }
 */
 
-
-//A LINKED-LIST INT-TO-INT HASHMAP IMPLEMENTATION
-
-typedef struct IntPair
+internal const u64 HASH_UNUSED = 0xffffffffffffffffULL;//unsinged long long
+typedef struct H32_static
 {
-   i32 key;
-   i32 value;
-   struct IntPair *next;
-}IntPair;
+	u64 *keys;
+	u32 *values;
+	u32 n;
+}H32_static;
 
-typedef struct IntHashMap
-{
-    IntPair **data;
-    u32 size;
-}IntHashMap;
 
-internal IntHashMap 
-hashmap_create(u32 size)
+
+//to clear the hash table we just set everything to 0xFF
+INLINE void h32_static_clear(H32_static *h)
 {
-    IntHashMap res;
-    res.size = size;
-    //res.data = (IntPair**)arena_alloc(&global_platform.permanent_storage, sizeof(IntPair*) * size);
-    res.data = (IntPair**)ALLOC(sizeof(IntPair*) * size);
-    i32 i;
-    for (i = 0; i < size; ++i)
-        res.data[i] = NULL;
-    return res;
-}
-internal i32
-hash_code(IntHashMap* table, i32 key)
-{
-    return abs((i32)(key % table->size));
+	memset(h->keys, 0xFF, sizeof(*h->keys) * h->n);
 }
 
-internal void
-hashmap_insert(IntHashMap* table, i32 key, i32 val)
+//to init we just malloc a couple of times and clear
+INLINE void H32_static_init(H32_static *h, u32 n)
 {
-   i32 pos = hash_code(table, key);
-   IntPair *list_to_insert_pair = table->data[pos];
-   IntPair *iter = &list_to_insert_pair[0];
-   while (iter)
-   {
-        if (iter->key == key)
-        {
-            iter->value = val;
-            return;
-        }
-        iter = iter->next;
-   }
-   IntPair *new_pair = (IntPair*)ALLOC(sizeof(IntPair));
-   new_pair->key = key;
-   new_pair->value = val;
-   new_pair->next = &list_to_insert_pair[0];
-   table->data[pos] = new_pair;
+	h->n = n;
+	h->keys = malloc(sizeof(u64) * h->n * 20);
+	h->values = malloc(sizeof(u32) * h->n * 20);
+	h32_static_clear(h);
 }
 
-
-internal i32 
-hashmap_lookup(IntHashMap* table, u32 key)
+//to make a K-V pair we find the correct bucket for our key (i) and search until we find an empty slot, 
+//or an element with that key, meaning the key is already in the hash, if we go out of bounds, NO problem
+INLINE void H32_static_set(H32_static *h, u64 key, u32 value)
 {
-    u32 pos = hash_code(table, key);
-    IntPair* list_to_search = table->data[pos];
-    IntPair* iter = list_to_search;
-    while (iter)
-    {
-       if (iter->key == key)
-       {
-            return iter->value;
-       }
-       iter = iter->next;
-    }
-    return -1;
+	u32 i = key % h->n;
+	while (h->keys[i] != key && h->keys[i] != HASH_UNUSED)
+		i = (i+1) % h->n;
+	h->keys[i] = key;
+	h->values[i] = value;
 }
 
-static u32 
-hashmap_remove(IntHashMap *table, u32 key)
+//to get a value, we find the correct bucket for our key (i), and we search until we find our exact key, 
+//meaning the K-V pair we search for, then we just return the value or 0 for a failed search
+INLINE u32 H32_static_get(H32_static *h, u64 key)
 {
-    u32 pos = hash_code(table, key);
-    IntPair *list_to_search = table->data[pos];
-    IntPair *iter = list_to_search;
-    IntPair *prev = NULL;
-    while (iter)
-    {
-       if (iter->key == key)
-       {
-          if (prev == NULL)
-          {
-              table->data[pos] = iter->next;
-              free(iter);
-              return 1;
-          }else
-          {
-            prev->next = iter->next;
-            free(iter);
-            return 1;
-          }
-       }
-       prev = iter;
-       iter = iter->next;
-    }
-    return 0;
+	u32 i = key % h->n;
+	while (h->keys[i] != key && h->keys[i] != HASH_UNUSED)
+		i = (i + 1) % h->n;
+	return h->keys[i] == HASH_UNUSED ? 0 : h->values[i];
 }
 
-internal void *free_next(IntPair *p)
+INLINE u64 hash_str(char *s)
 {
-    if (p)
-    {
-        free_next(p->next);
-        FREE(p);
-    }
+	return (u64)s[0];
 }
-
-internal void hashmap_destroy(IntHashMap *table)
-{
-    for (u32 i = 0; i < table->size; ++i)
-    {
-        IntPair *next = table->data[i];
-        free_next(next);
-    }
-}
-
-//NOTE: deletes previous hashmap, initializes a new one
-//with same hash function..
-internal void
-hashmap_reset(IntHashMap *table)
-{
-    u32 count = table->size;
-    hashmap_destroy(table);
-    FREE(table->data);
-    *table = hashmap_create(count);
-}
-
-
-//CUBE DATA :))))
-local_persist f32 cube_data[] = {
-        // positions          // normals           // texture coords
-        -1.f, -1.f, -1.f,  0.0f,  0.0f, -1.0f,  0.0f,  0.0f,
-         1.f, -1.f, -1.f,  0.0f,  0.0f, -1.0f,  1.0f,  0.0f,
-         1.f,  1.f, -1.f,  0.0f,  0.0f, -1.0f,  1.0f,  1.0f,
-         1.f,  1.f, -1.f,  0.0f,  0.0f, -1.0f,  1.0f,  1.0f,
-        -1.f,  1.f, -1.f,  0.0f,  0.0f, -1.0f,  0.0f,  1.0f,
-        -1.f, -1.f, -1.f,  0.0f,  0.0f, -1.0f,  0.0f,  0.0f,
-
-        -1.f, -1.f,  1.f,  0.0f,  0.0f,  1.0f,  0.0f,  0.0f,
-         1.f, -1.f,  1.f,  0.0f,  0.0f,  1.0f,  1.0f,  0.0f,
-         1.f,  1.f,  1.f,  0.0f,  0.0f,  1.0f,  1.0f,  1.0f,
-         1.f,  1.f,  1.f,  0.0f,  0.0f,  1.0f,  1.0f,  1.0f,
-        -1.f,  1.f,  1.f,  0.0f,  0.0f,  1.0f,  0.0f,  1.0f,
-        -1.f, -1.f,  1.f,  0.0f,  0.0f,  1.0f,  0.0f,  0.0f,
-
-        -1.f,  1.f,  1.f, -1.0f,  0.0f,  0.0f,  1.0f,  0.0f,
-        -1.f,  1.f, -1.f, -1.0f,  0.0f,  0.0f,  1.0f,  1.0f,
-        -1.f, -1.f, -1.f, -1.0f,  0.0f,  0.0f,  0.0f,  1.0f,
-        -1.f, -1.f, -1.f, -1.0f,  0.0f,  0.0f,  0.0f,  1.0f,
-        -1.f, -1.f,  1.f, -1.0f,  0.0f,  0.0f,  0.0f,  0.0f,
-        -1.f,  1.f,  1.f, -1.0f,  0.0f,  0.0f,  1.0f,  0.0f,
-
-         1.f,  1.f,  1.f,  1.0f,  0.0f,  0.0f,  1.0f,  0.0f,
-         1.f,  1.f, -1.f,  1.0f,  0.0f,  0.0f,  1.0f,  1.0f,
-         1.f, -1.f, -1.f,  1.0f,  0.0f,  0.0f,  0.0f,  1.0f,
-         1.f, -1.f, -1.f,  1.0f,  0.0f,  0.0f,  0.0f,  1.0f,
-         1.f, -1.f,  1.f,  1.0f,  0.0f,  0.0f,  0.0f,  0.0f,
-         1.f,  1.f,  1.f,  1.0f,  0.0f,  0.0f,  1.0f,  0.0f,
-
-        -1.f, -1.f, -1.f,  0.0f, -1.0f,  0.0f,  0.0f,  1.0f,
-         1.f, -1.f, -1.f,  0.0f, -1.0f,  0.0f,  1.0f,  1.0f,
-         1.f, -1.f,  1.f,  0.0f, -1.0f,  0.0f,  1.0f,  0.0f,
-         1.f, -1.f,  1.f,  0.0f, -1.0f,  0.0f,  1.0f,  0.0f,
-        -1.f, -1.f,  1.f,  0.0f, -1.0f,  0.0f,  0.0f,  0.0f,
-        -1.f, -1.f, -1.f,  0.0f, -1.0f,  0.0f,  0.0f,  1.0f,
-
-        -1.f,  1.f, -1.f,  0.0f,  1.0f,  0.0f,  0.0f,  1.0f,
-         1.f,  1.f, -1.f,  0.0f,  1.0f,  0.0f,  1.0f,  1.0f,
-         1.f,  1.f,  1.f,  0.0f,  1.0f,  0.0f,  1.0f,  0.0f,
-         1.f,  1.f,  1.f,  0.0f,  1.0f,  0.0f,  1.0f,  0.0f,
-        -1.f,  1.f,  1.f,  0.0f,  1.0f,  0.0f,  0.0f,  0.0f,
-        -1.f,  1.f, -1.f,  0.0f,  1.0f,  0.0f,  0.0f,  1.0f
-};
-
-
-
-
-
-//COROUTINES its pretty much cute_coroutine.h, awesome idea thanks randy!
-
-#define COROUTINE_MAX_DEPTH 8
-#define COROUTINE_CASE_OFFSET (1024 * 1024)
-
-#ifndef COROUTINE_ASSERT
-	#include <assert.h>
-	#define COROUTINE_ASSERT assert
-#endif
-
-typedef struct Coroutine
-{
-	f32 elapsed;
-	i32 flag;
-	i32 index;
-	i32 line[COROUTINE_MAX_DEPTH];
-} Coroutine;
-
-INLINE void coroutine_init(Coroutine *co)
-{
-	co->elapsed = 0;
-	co->flag = 0;
-	co->index = 0;
-	for (i32 i = 0; i < COROUTINE_MAX_DEPTH; ++i) co->line[i] = 0;
-}
-#define COROUTINE_START(co)          do { co->flag = 0; switch (co->line[co->index]) { default:
-#define COROUTINE_CASE(co, name)     case __LINE__: name: co->line[co->index] = __LINE__;
-#define COROUTINE_WAIT(co, time, dt) do { case __LINE__: co->line[co->index] = __LINE__; co->elapsed += dt; do { if (co->elapsed < time) { co->flag = 1; goto __co_end; } else { co->elapsed = 0; } } while (0); } while (0)
-#define COROUTINE_EXIT(co)           do { co->flag = 1; goto __co_end; } while (0)
-#define COROUTINE_YIELD(co)          do { co->line[co->index] = __LINE__; COROUTINE_EXIT(co); case __LINE__:; } while (0)
-#define COROUTINE_CALL(co, ...)      co->flag = 0; case __LINE__: COROUTINE_ASSERT(co->index < COROUTINE_MAX_DEPTH); co->line[co->index++] = __LINE__; __VA_ARGS__; co->index--; do { if (co->flag) { goto __co_end; } else { case __LINE__ + COROUTINE_CASE_OFFSET: co->line[co->index] = __LINE__ + COROUTINE_CASE_OFFSET; } } while (0)
-#define COROUTINE_END(co)            } co->line[co->index] = 0; __co_end:; } while (0)
-
+/*--Hash usage example
+	char **keys[] = {"hello world","general kenobi","anikon"}
+	u32 values[] = {str_size("hello_world"), str_size("general_kenobi"), str_size("anikon")};
+	H32_static h;
+	h32_static_init(&h, 10);
+	for (u32 i = 0; i < array_count(values); ++i)
+		h32_static_set(&h, hash_str(key), val);
+	for (u32 i = 0; i <array_count(values); ++i)
+		assert(h32_static_get(&h, hash_str(key)) == str_size(kets[i]));
+*/
 
 #ifdef __cplusplus
 }
 #endif
+INLINE char * 
+read_whole_file_binary(char *filename, u32 *size)
+{
+    FILE *f = fopen(filename, "rb");
+	
+    fseek(f, 0, SEEK_END);
+    long fsize = ftell(f);
+	*size = fsize;
+    fseek(f, 0, SEEK_SET);  /* same as rewind(f); */
 
+    char *string = (char*)malloc(fsize + 1);
+    fread(string, 1, fsize, f);
+    fclose(f); 
+
+    return (char*)string;
+}
 
 #endif
 
