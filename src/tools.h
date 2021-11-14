@@ -975,6 +975,24 @@ INLINE mat4 perspective_proj(f32 fov, f32 aspect, f32 n, f32 f)
     return res;
 }
 
+INLINE mat4 perspective_proj_vk(f32 fov, f32 aspect, f32 n, f32 f)
+{
+    mat4 res = m4();
+
+    f32 cot = 1.0f / tan(fov * (PI / 360.0f));
+
+    res.elements[0][0] = cot / aspect;
+    res.elements[1][1] = cot;
+    res.elements[2][3] = -1.0f;
+
+    res.elements[2][2] = (n + f)/(n - f);
+
+    res.elements[3][2] = (2.f * n * f) / (n - f);
+    res.elements[3][3] = 0.0f;
+
+    return res;
+}
+
 INLINE mat4 look_at(vec3 eye, vec3 center, vec3 fake_up)
 {
     mat4 res = m4();
