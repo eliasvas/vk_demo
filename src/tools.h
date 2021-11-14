@@ -28,17 +28,26 @@
 #include <math.h>
 
 typedef uint8_t   u8;
-typedef int8_t    i8;
+typedef int8_t    s8;
 typedef uint16_t  u16;
-typedef int16_t   i16;
+typedef int16_t   s16;
 typedef uint32_t  u32;
-typedef int32_t   i32;
+typedef int32_t   s32;
 typedef uint64_t  u64;
-typedef int64_t   i64;
+typedef int64_t   s64;
 typedef float     f32;
 typedef double    f64;
 typedef int32_t   b32;
 typedef char      b8;
+
+#if defined(_WIN32)
+#define PLATFORM_WINDOWS
+#elif defined(__APPLE__)
+#define PLATFORM_APPLE
+#else
+#define PLATFORM_LINUX
+#endif
+
 
 #if !defined(internal)
 #define internal static 
@@ -90,16 +99,16 @@ INLINE b32 is_pow2(u32 val)
     return(res);
 }
 internal b32
-char_is_alpha(i32 c)
+char_is_alpha(s32 c)
 {
     return ((c >='A' && c <= 'Z') || (c >= 'a' && c <= 'z'));
 }
-internal b32 char_is_digit(i32 c)
+internal b32 char_is_digit(s32 c)
 {
     return c >= '0'&& c <= '9';
 }
 
-internal i32 char_to_lower(i32 c)
+internal s32 char_to_lower(s32 c)
 {
     if (c >= 'A' && c <= 'z')
     {
@@ -136,7 +145,7 @@ typedef union vec2
     };
     f32 elements[2];
 #ifdef __cplusplus
-    inline f32 &operator[](i32 &index)
+    inline f32 &operator[](s32 &index)
     {
         return elements[index];
     }
@@ -157,7 +166,7 @@ typedef union vec3
     };
     f32 elements[3];
 #ifdef __cplusplus
-    inline f32 &operator[](i32 &index)
+    inline f32 &operator[](s32 &index)
     {
         return elements[index];
     }
@@ -182,7 +191,7 @@ typedef union vec4
     __m128 elements_sse; //because __m128 = 128 = 4 * float = 4*32 = 128 bits
 #endif
 #ifdef __cplusplus
-    inline f32 &operator[](i32 &index)
+    inline f32 &operator[](s32 &index)
     {
         return elements[index];
     }
@@ -203,7 +212,7 @@ typedef union mat4
     __m128 cols[4]; //same as elements (our matrices are column major)
 #endif
 #ifdef __cplusplus
-    inline vec4 operator[](i32 &Index)
+    inline vec4 operator[](s32 &Index)
     {
         f32* col = elements[Index];
 
@@ -223,29 +232,29 @@ typedef union ivec3
 {
     struct
     {
-        i32 x,y,z;
+        s32 x,y,z;
     };
     struct
     {
-        i32 r,g,b;
+        s32 r,g,b;
     };
-    i32 elements[3];
+    s32 elements[3];
 }ivec3;
 
 typedef union ivec2
 {
     struct
     {
-        i32 x,y;
+        s32 x,y;
     };
     struct
     {
-        i32 r,g;
+        s32 r,g;
     };
-    i32 elements[2];
+    s32 elements[2];
 }ivec2;
 
-INLINE ivec2 iv2(i32 x, i32 y)
+INLINE ivec2 iv2(s32 x, s32 y)
 {
     ivec2 res;
     res.x = x;
@@ -264,7 +273,7 @@ INLINE void ivec2_swap(ivec2 *l, ivec2 *r)
 
 INLINE b32 ivec3_equals(ivec3 l, ivec3 r)
 {
-    i32 res = ((l.x == r.x) && (l.y == r.y) && (l.z == r.z));
+    s32 res = ((l.x == r.x) && (l.y == r.y) && (l.z == r.z));
     return res;
 }
 
@@ -684,7 +693,7 @@ INLINE vec4 mat4_mulv(mat4 mat, vec4 vec)
 {
     vec4 res;
 
-    i32 cols, rows;
+    s32 cols, rows;
     for(rows = 0; rows < 4; ++rows)
     {
         f32 s = 0;
@@ -811,7 +820,7 @@ INLINE mat4 mat4_inv(mat4 m)
     mat4 res;
     f32 det;
     mat4 inv, inv_out;
-    i32 i;
+    s32 i;
 
     inv.raw[0] = m.raw[5]  * m.raw[10] * m.raw[15] - 
              m.raw[5]  * m.raw[11] * m.raw[14] - 

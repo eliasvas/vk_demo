@@ -3,14 +3,31 @@
 #include "stdlib.h"
 #include "string.h"
 
-#define GLFW_INCLUDE_VULKAN
-#include <glfw3.h>
+
+#if defined(PLATFORM_WINDOWS)
+	#define GLFW_INCLUDE_VULKAN //temp
+	#include <glfw3.h> //temp
+	#include "windows.h"
+#else
+	#define GLFW_INCLUDE_VULKAN
+	#include <glfw3.h>
+#endif
+
+//milliseconds since program startup
+internal f32 get_time(void)
+{
+#if defined(PLATFORM_WINDOWS)
+	return GetTickCount()/1000.0f;
+#else
+	return glfwGetTime();
+#endif
+}
 
 #define STB_IMAGE_IMPLEMENTATION
 #include "ext/stb_image.h"
 
-#define WIDTH 800
-#define HEIGHT 600
+internal s32 window_w = 800;
+internal s32 window_h = 600;
 
 /*
  -make win32 backend
@@ -129,14 +146,14 @@ typedef struct UniformBufferObject
     mat4 proj;
 }UniformBufferObject;
 
-typedef struct TestVertex
+typedef struct Vertex
 {
     vec3 pos;
     vec3 color;
 	vec2 tex_coord;
-}TestVertex;
+}Vertex;
 
-TestVertex vertices[] = {
+internal Vertex vertices[] = {
     {{-0.5f, -0.5f, 0.0f},{0.0f, 0.3f, 1.0f},{0.0f,0.0f}},
     {{0.5f, -0.5f, 0.0f},{0.7f, 0.2f, 0.0f},{1.0f,0.0f}},
     {{0.5f, 0.5f, 0.0f},{1.0f, 0.8f, 0.1f},{1.0f,1.0f}},
@@ -150,15 +167,15 @@ TestVertex vertices[] = {
 	
 };
 
-u16 indices[] = {0,1,2,2,3,0
+internal u32 indices[] = {0,1,2,2,3,0
         ,4,5,6,6,7,4};
 
-//return the binding description of TestVertex type vertex input
+//return the binding description of Vertex type vertex input
 internal VkVertexInputBindingDescription get_bind_desc_test_vert(void)
 {
     VkVertexInputBindingDescription bind_desc = {0};
     bind_desc.binding = 0;
-    bind_desc.stride = sizeof(TestVertex);
+    bind_desc.stride = sizeof(Vertex);
     bind_desc.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;//per-vertex
     return bind_desc;
 }
@@ -168,15 +185,15 @@ internal void get_attr_desc_test_vert(VkVertexInputAttributeDescription *attr_de
     attr_desc[0].binding = 0;
     attr_desc[0].location = 0;
     attr_desc[0].format = VK_FORMAT_R32G32B32_SFLOAT;
-    attr_desc[0].offset = offsetof(TestVertex, pos);
+    attr_desc[0].offset = offsetof(Vertex, pos);
     attr_desc[1].binding = 0;
     attr_desc[1].location = 1;
     attr_desc[1].format = VK_FORMAT_R32G32B32_SFLOAT;
-    attr_desc[1].offset = offsetof(TestVertex, color);
+    attr_desc[1].offset = offsetof(Vertex, color);
 	attr_desc[2].binding = 0;
     attr_desc[2].location = 2;
     attr_desc[2].format = VK_FORMAT_R32G32_SFLOAT;
-    attr_desc[2].offset = offsetof(TestVertex, tex_coord);
+    attr_desc[2].offset = offsetof(Vertex, tex_coord);
 }
 
 typedef struct SwapChainSupportDetails
@@ -401,8 +418,8 @@ internal VkSurfaceFormatKHR choose_swap_surface_format(SwapChainSupportDetails d
 }
 internal VkPresentModeKHR choose_swap_present_mode(SwapChainSupportDetails details)
 {
-    //return VK_PRESENT_MODE_FIFO_KHR;
-    return VK_PRESENT_MODE_IMMEDIATE_KHR;
+    return VK_PRESENT_MODE_FIFO_KHR;
+    //return VK_PRESENT_MODE_IMMEDIATE_KHR;
 }
 
 internal VkExtent2D choose_swap_extent(SwapChainSupportDetails details)
@@ -986,7 +1003,7 @@ internal void create_command_buffers(void)
         VkBuffer vertex_buffers[] = {vertex_buffer};
         VkDeviceSize offsets[] = {0};
         vkCmdBindVertexBuffers(command_buffers[i], 0, 1, vertex_buffers, offsets);
-        vkCmdBindIndexBuffer(command_buffers[i], index_buffer, 0, VK_INDEX_TYPE_UINT16);
+        vkCmdBindIndexBuffer(command_buffers[i], index_buffer, 0, VK_INDEX_TYPE_UINT32);
         
         vkCmdBindDescriptorSets(command_buffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, 
                                 pipeline_layout, 0, 1, &descriptor_sets[i], 0, NULL);
@@ -1200,7 +1217,7 @@ internal void copy_buffer_to_image(VkBuffer buffer, VkImage image, u32 width, u3
 internal void create_texture_image(void)
 {
 	//[0]: we read an image and store all the pixels in a pointer
-	i32 tex_w, tex_h, tex_c;
+	s32 tex_w, tex_h, tex_c;
 	stbi_uc *pixels = stbi_load("../assets/test.png", &tex_w, &tex_h, &tex_c, STBI_rgb_alpha);
 	VkDeviceSize image_size = tex_w * tex_h * 4;
 	
@@ -1391,7 +1408,7 @@ internal void cleanup_swapchain(void)
 internal void recreate_swapchain(void)
 {
     //in case of window minimization (w = 0, h = 0) we wait until we get a proper window again
-    i32 width = 0, height = 0;
+    s32 width = 0, height = 0;
     glfwGetFramebufferSize(window, &width, &height);
     while (width == 0 || height == 0) {
         glfwGetFramebufferSize(window, &width, &height);
@@ -1471,9 +1488,9 @@ internal int vulkan_init(void) {
 internal void update_uniform_buffer(u32 image_index)
 {
     UniformBufferObject ubo = {0};
-    ubo.model = mat4_mul(mat4_translate(v3(0,0,-4)),mat4_rotate( 360.0f * sin(glfwGetTime()) ,v3(0,1,0)));
+    ubo.model = mat4_mul(mat4_translate(v3(0,0,-4)),mat4_rotate( 360.0f * sin(get_time()) ,v3(0,1,0)));
     ubo.view = look_at(v3(0,0,0), v3(0,0,-1), v3(0,1,0));
-    ubo.proj = perspective_proj_vk(45.0f,WIDTH/(f32)HEIGHT, 0.1, 10);
+    ubo.proj = perspective_proj_vk(45.0f,window_w/(f32)window_h, 0.1, 10);
     
     void* data;
     vkMapMemory(device, uniform_buffer_memories[image_index], 0, sizeof(ubo), 0, &data);
@@ -1546,7 +1563,7 @@ global f32 current_time = 0.0f;
 global f32 prev_time = 0.0f;
 internal void calc_fps(void)
 {
-    f32 current_time = glfwGetTime();
+    f32 current_time = get_time();
     f32 delta = current_time - prev_time;
     nb_frames++;
     if ( delta >= 1.0f){
