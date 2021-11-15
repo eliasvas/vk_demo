@@ -149,7 +149,7 @@ typedef struct UniformBufferObject
 typedef struct Vertex
 {
     vec3 pos;
-    vec3 color;
+    vec3 normal;
 	vec2 tex_coord;
 }Vertex;
 
@@ -189,7 +189,7 @@ internal void get_attr_desc_test_vert(VkVertexInputAttributeDescription *attr_de
     attr_desc[1].binding = 0;
     attr_desc[1].location = 1;
     attr_desc[1].format = VK_FORMAT_R32G32B32_SFLOAT;
-    attr_desc[1].offset = offsetof(Vertex, color);
+    attr_desc[1].offset = offsetof(Vertex, normal);
 	attr_desc[2].binding = 0;
     attr_desc[2].location = 2;
     attr_desc[2].format = VK_FORMAT_R32G32_SFLOAT;

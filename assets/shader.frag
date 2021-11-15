@@ -1,12 +1,19 @@
 #version 450
 
-layout(location = 0) in vec3 fragColor;
+layout(location = 0) in vec3 f_normal;
 layout(location = 1) in vec2 f_tex_coord;
 
-layout(location = 0) out vec4 outColor;
+layout(location = 0) out vec4 out_color;
+
 
 layout(binding = 1) uniform sampler2D tex_sampler;
 
+vec3 dir_light = vec3(0.2,0.3,-0.4);
+
 void main() {
-    outColor = texture(tex_sampler, f_tex_coord);
+	vec3 lightdir = normalize(-dir_light);
+	float NdotL = max(dot(f_normal, lightdir),0.0);
+    vec4 diffuse = texture(tex_sampler, f_tex_coord);
+	//out_color = diffuse * 0.1 + diffuse * 0.9 * NdotL;
+	out_color = diffuse;
 }

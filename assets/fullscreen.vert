@@ -3,8 +3,9 @@
 //layout(location = 0) in vec2 vertex_pos;
 //layout(location = 1) in vec3 vertex_color;
 
-layout (location = 0) out vec3 fragColor;
-layout (location = 1) out vec2 outUV;
+layout (location = 0) out vec3 f_color;
+layout (location = 1) out vec2 f_tex_coord;
+layout(location = 2) in vec3 f_normal;
 
 layout(binding = 0) uniform UniformBufferObject {
     mat4 model;
@@ -24,7 +25,7 @@ vec2 positions[3] = vec2[](
     vec2(-0.5, 0.5)
 );
 void main() {
-    outUV = vec2((gl_VertexIndex << 1) & 2, gl_VertexIndex & 2);
-	fragColor = colors[gl_VertexIndex];
-    gl_Position = vec4(outUV * 2.0f + -1.0f, 0.0f, 1.0f);
+    f_tex_coord = vec2((gl_VertexIndex << 1) & 2, gl_VertexIndex & 2);
+	f_color = colors[gl_VertexIndex];
+    gl_Position = vec4(f_tex_coord * 2.0f + -1.0f, 0.0f, 1.0f);
 }
