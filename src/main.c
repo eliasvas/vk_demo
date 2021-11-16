@@ -3,25 +3,9 @@
 #include "stdlib.h"
 #include "string.h"
 
-
-#if defined(PLATFORM_WINDOWS)
-	#define GLFW_INCLUDE_VULKAN //temp
-	#include <glfw3.h> //temp
-	#include "windows.h"
-#else
-	#define GLFW_INCLUDE_VULKAN
-	#include <glfw3.h>
-#endif
-
-//milliseconds since program startup
-internal f32 get_time(void)
-{
-#if defined(PLATFORM_WINDOWS)
-	return GetTickCount()/1000.0f;
-#else
-	return glfwGetTime();
-#endif
-}
+#define NOGLFW 1
+#include "vkwin.h"
+Window wnd;
 
 #define STB_IMAGE_IMPLEMENTATION
 #include "ext/stb_image.h"
@@ -37,7 +21,7 @@ internal s32 window_h = 600;
  -offscreen rendering
  -pipeline recreation
  */
-GLFWwindow* window; //our GLFW window!
+
 
 VkInstance instance; //connection between application and the vulkan library 
 
@@ -261,11 +245,6 @@ internal u32 check_validation_layer_support(void){
 	return TRUE;
 }
 
-internal void vk_error(char *text)
-{
-	printf("%s\n",text);
-}
-
 internal void create_instance(void) {
 	if (enable_validation_layers&&(check_validation_layer_support()==0))
 		vk_error("Validation layers requested, but not available!");
@@ -282,19 +261,22 @@ internal void create_instance(void) {
 	create_info.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
 	create_info.pApplicationInfo = &appinfo;
     
+	u32 instance_ext_count = 0;
+	char **instance_extensions; //array of strings with names of VK extensions needed!
+    char *base_extensions[] = {
+		"VK_KHR_surface",
+		"VK_KHR_win32_surface",
+	};
+	//instance_extensions = window_get_required_instance_extensions(&wnd, &instance_ext_count);
     
-	u32 glfw_ext_count = 0;
-	const char **glfw_extensions; //array of strings with names of VK extensions needed!
-    
-	glfw_extensions = glfwGetRequiredInstanceExtensions(&glfw_ext_count);
-    
-	create_info.enabledExtensionCount = glfw_ext_count;
-	create_info.ppEnabledExtensionNames = glfw_extensions;
+	create_info.enabledExtensionCount = array_count(base_extensions);
+	create_info.ppEnabledExtensionNames = base_extensions;
 	create_info.enabledLayerCount = 0;
+
     
 	VkResult res = vkCreateInstance(&create_info, NULL, &instance);
     
-	if (vkCreateInstance(&create_info, NULL, &instance) != VK_SUCCESS)
+	if (res != VK_SUCCESS)
 		vk_error("Failed to create Instance!");
 	
     
@@ -303,7 +285,7 @@ internal void create_instance(void) {
 	vkEnumerateInstanceExtensionProperties(NULL, &ext_count, NULL);
 	VkExtensionProperties *extensions = malloc(sizeof(VkExtensionProperties) * ext_count);
 	vkEnumerateInstanceExtensionProperties(NULL, &ext_count, extensions);
-    /*
+    /* //prints supported instance extensions
 	for (u32 i = 0; i < ext_count; ++i)
 		printf("EXT: %s\n", extensions[i]);
     */
@@ -431,8 +413,8 @@ internal VkExtent2D choose_swap_extent(SwapChainSupportDetails details)
     else
     {
         u32 width, height;
-        glfwGetFramebufferSize(window, &width, &height);
-        
+
+		window_get_framebuffer_size(&wnd, &width, &height);
         VkExtent2D actual_extent = {width, height};
         actual_extent.height=maximum(details.capabilities.maxImageExtent.height,
                                      minimum(details.capabilities.minImageExtent.height,actual_extent.height));
@@ -1374,8 +1356,7 @@ internal void create_sync_objects(void)
 
 internal void create_surface(void)
 {
-    if (glfwCreateWindowSurface(instance, window, NULL, &surface)!=VK_SUCCESS)
-        vk_error("Failed to create window surface!");
+	window_create_window_surface(instance, &wnd, &surface);
 }
 
 internal void framebuffer_resize_callback(void){framebuffer_resized = TRUE;}
@@ -1409,11 +1390,8 @@ internal void recreate_swapchain(void)
 {
     //in case of window minimization (w = 0, h = 0) we wait until we get a proper window again
     s32 width = 0, height = 0;
-    glfwGetFramebufferSize(window, &width, &height);
-    while (width == 0 || height == 0) {
-        glfwGetFramebufferSize(window, &width, &height);
-        glfwWaitEvents();
-    } 
+	window_get_framebuffer_size(&wnd, &width, &height);
+    
     
     vkDeviceWaitIdle(device);
     
@@ -1570,8 +1548,7 @@ internal void calc_fps(void)
         f32 fps = nb_frames / delta;
         char frames[256];
         sprintf(frames, "FPS: %f", fps);
-        glfwSetWindowTitle(window, frames);
-        
+		window_set_window_title(&wnd, frames);
         nb_frames = 0;
         prev_time = current_time;
     }
@@ -1579,9 +1556,9 @@ internal void calc_fps(void)
 internal void main_loop(void) 
 {
     
-	while (!glfwWindowShouldClose(window)) {
+	while (!window_should_close(&wnd)) {
         calc_fps();
-		glfwPollEvents();
+		window_poll_events(&wnd);
         draw_frame();
 	}
     
@@ -1613,19 +1590,23 @@ internal void cleanup(void)
     vkDestroyDevice(device, NULL);
     vkDestroySurfaceKHR(instance, surface, NULL);
     vkDestroyInstance(instance, NULL);
-	glfwDestroyWindow(window);
-	glfwTerminate();
+	window_destroy(&wnd);
 }
+
+
+
 int main(void) {
-	//first we initialize window stuff (GLFW)
-	glfwInit();
-	glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
-    window = glfwCreateWindow(800, 600, "Vulkan Sample", NULL, NULL);
-	glfwSetFramebufferSizeCallback(window, framebuffer_resize_callback);
+#if defined(PLATFORM_WINDOWS) && defined(NOGLFW)
+	printf("win init\n");
+#else
+	printf("glfw init\n");
+#endif
+	if (!window_init_vulkan(&wnd, "Vulkan Sample", 800, 600))
+		printf("Failed to create a window :(\n");
+	
+    window_set_resize_callback(&wnd, framebuffer_resize_callback);
     
-    
-	if(vulkan_init())
-		printf("Vulkan OK");
+	if(vulkan_init())printf("Vulkan OK");
 	
 	main_loop();
 	
