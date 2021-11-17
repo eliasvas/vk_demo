@@ -23,6 +23,7 @@ internal s32 window_h = 600;
  */
 
 
+
 VkInstance instance; //connection between application and the vulkan library 
 
 //[SPEC]: A single complete implementation of Vulkan available to the host.
@@ -136,23 +137,56 @@ typedef struct Vertex
     vec3 normal;
 	vec2 tex_coord;
 }Vertex;
-
-internal Vertex vertices[] = {
-    {{-0.5f, -0.5f, 0.0f},{0.0f, 0.3f, 1.0f},{0.0f,0.0f}},
-    {{0.5f, -0.5f, 0.0f},{0.7f, 0.2f, 0.0f},{1.0f,0.0f}},
-    {{0.5f, 0.5f, 0.0f},{1.0f, 0.8f, 0.1f},{1.0f,1.0f}},
-    {{-0.5f, 0.5f, 0.0f},{0.0f, 0.1f, 1.0f},{0.0f,1.0f}},
-	
-	
-	{{0,-0.5f, -0.5f},{1.0f, 0.3f, 1.0f},{0.0f,0.0f}},
-    {{0,0.5f, -0.5f},{1.0f, 0.2f, 0.0f},{1.0f,0.0f}},
-    {{0,0.5f, 0.5f},{1.0f, 0.8f, 0.1f},{1.0f,1.0f}},
-    {{0,-0.5f, 0.5f},{1.0f, 0.1f, 1.0f},{0.0f,1.0f}},
-	
+		
+internal vec3 cube_positions[]  = {
+	{0.5f, 0.5f, 0.5f},  {-0.5f, 0.5f, 0.5f},  {-0.5f,-0.5f, 0.5f}, {0.5f,-0.5f, 0.5f},   // v0,v1,v2,v3 (front)
+    {0.5f, 0.5f, 0.5f},  {0.5f,-0.5f, 0.5f},   {0.5f,-0.5f,-0.5f},  {0.5f, 0.5f,-0.5f},   // v0,v3,v4,v5 (right)
+    {0.5f, 0.5f, 0.5f},  {0.5f, 0.5f,-0.5f},   {-0.5f, 0.5f,-0.5f}, {-0.5f, 0.5f, 0.5f},   // v0,v5,v6,v1 (top)
+    {-0.5f, 0.5f, 0.5f}, {-0.5f, 0.5f,-0.5f},  {-0.5f,-0.5f,-0.5f}, {-0.5f,-0.5f, 0.5f},   // v1,v6,v7,v2 (left)
+    {-0.5f,-0.5f,-0.5f}, {.05f,-0.5f,-0.5f},   {0.5f,-0.5f, 0.5f},  {-0.5f,-0.5f, 0.5f},   // v7,v4,v3,v2 (bottom)
+    {0.5f,-0.5f,-0.5f},  {-0.5f,-0.5f,-0.5f},  {-0.5f, 0.5f,-0.5f}, {0.5f, 0.5f,-0.5f},    // v4,v7,v6,v5 (back)
 };
 
-internal u32 indices[] = {0,1,2,2,3,0
-        ,4,5,6,6,7,4};
+// normal array
+internal vec3 cube_normals[] = {
+	{0, 0, 1},   {0, 0, 1},   {0, 0, 1},   {0, 0, 1},  // v0,v1,v2,v3 (front)
+	{1, 0, 0},   {1, 0, 0},   {1, 0, 0},   {1, 0, 0},  // v0,v3,v4,v5 (right)
+	{0, 1, 0},   {0, 1, 0},   {0, 1, 0},   {0, 1, 0},  // v0,v5,v6,v1 (top)
+	{-1, 0, 0},  {-1, 0, 0},  {-1, 0, 0},  {-1, 0, 0},  // v1,v6,v7,v2 (left)
+	{0,-1, 0},   {0,-1, 0},   {0,-1, 0},   {0,-1, 0},  // v7,v4,v3,v2 (bottom)
+	{0, 0,-1},   {0, 0,-1},   {0, 0,-1},   {0, 0,-1},   // v4,v7,v6,v5 (back)
+};
+
+// texCoord array
+internal vec2 cube_tex_coords[] = {
+    {1, 0},   {0, 0},   {0, 1},   {1, 1},               // v0,v1,v2,v3 (front)
+	{0, 0},   {0, 1},   {1, 1},   {1, 0},               // v0,v3,v4,v5 (right)
+	{1, 1},   {1, 0},   {0, 0},   {0, 1},               // v0,v5,v6,v1 (top)
+	{1, 0},   {0, 0},   {0, 1},   {1, 1},               // v1,v6,v7,v2 (left)
+	{0, 1},   {1, 1},   {1, 0},   {0, 0},               // v7,v4,v3,v2 (bottom)
+	{0, 1},   {1, 1},   {1, 0},   {0, 0}                // v4,v7,v6,v5 (back)
+};
+
+internal u32 cube_indices[] = {
+     0, 1, 2,   2, 3, 0,    // v0-v1-v2, v2-v3-v0 (front)
+     4, 5, 6,   6, 7, 4,    // v0-v3-v4, v4-v5-v0 (right)
+     8, 9,10,  10,11, 8,    // v0-v5-v6, v6-v1-v0 (top)
+    12,13,14,  14,15,12,    // v1-v6-v7, v7-v2-v1 (left)
+    16,17,18,  18,19,16,    // v7-v4-v3, v3-v2-v7 (bottom)
+    20,21,22,  22,23,20     // v4-v7-v6, v6-v5-v4 (back)
+};
+internal Vertex *cube_build_verts(void)
+{
+	Vertex *verts = malloc(sizeof(Vertex) * 24);
+	for (u32 i =0; i < 24; ++i)
+	{
+		verts[i].pos = cube_positions[i];
+		verts[i].normal = cube_normals[i];
+		verts[i].tex_coord = cube_tex_coords[i];
+	}
+	return verts;
+}
+
 
 //return the binding description of Vertex type vertex input
 internal VkVertexInputBindingDescription get_bind_desc_test_vert(void)
@@ -989,7 +1023,7 @@ internal void create_command_buffers(void)
         
         vkCmdBindDescriptorSets(command_buffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, 
                                 pipeline_layout, 0, 1, &descriptor_sets[i], 0, NULL);
-        vkCmdDrawIndexed(command_buffers[i], array_count(indices), 1, 0, 0, 0);
+        vkCmdDrawIndexed(command_buffers[i], array_count(cube_indices), 1, 0, 0, 0);
         vkCmdEndRenderPass(command_buffers[i]);
         if (vkEndCommandBuffer(command_buffers[i]) != VK_SUCCESS)
             vk_error("Failed to record command buffer!");
@@ -1263,29 +1297,14 @@ internal void create_depth_resources(void)
 
 internal void create_vertex_buffer(void)
 {
-    VkBufferCreateInfo buffer_info = {0};
-    buffer_info.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
-    buffer_info.size = sizeof(vertices[0]) * array_count(vertices);
-    buffer_info.usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
-    buffer_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-    if (vkCreateBuffer(device, &buffer_info, NULL, &vertex_buffer)!=VK_SUCCESS)
-        vk_error("Failed to create vertex buffer!");
-    
-    VkMemoryRequirements mem_req = {0};
-    vkGetBufferMemoryRequirements(device, vertex_buffer, &mem_req);
-    
-    VkMemoryAllocateInfo alloc_info = {0};
-    alloc_info.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-    alloc_info.allocationSize = mem_req.size;
-    alloc_info.memoryTypeIndex = find_mem_type(mem_req.memoryTypeBits, 
-                                               VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-    if (vkAllocateMemory(device, &alloc_info, NULL, &vertex_buffer_memory)!=VK_SUCCESS)
-        vk_error("Failed to allocate vertex buffer memory!");
-    vkBindBufferMemory(device, vertex_buffer, vertex_buffer_memory, 0);
+	Vertex *cube_vertices = cube_build_verts();
+    u32 buf_size = sizeof(Vertex) * 24;
+    create_buffer(buf_size, VK_BUFFER_USAGE_INDEX_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+                      VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,&vertex_buffer, &vertex_buffer_memory);
     
     void *data;
-    vkMapMemory(device, vertex_buffer_memory, 0, buffer_info.size, 0, &data);
-    memcpy(data, vertices, buffer_info.size);
+    vkMapMemory(device, vertex_buffer_memory, 0, buf_size, 0, &data);
+    memcpy(data, cube_vertices, buf_size);
     vkUnmapMemory(device, vertex_buffer_memory);
 }
 
@@ -1303,29 +1322,13 @@ internal void create_uniform_buffers(void)
 }
 internal void create_index_buffer(void)
 {
-    VkBufferCreateInfo buffer_info = {0};
-    buffer_info.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
-    buffer_info.size = sizeof(indices[0]) * array_count(indices);
-    buffer_info.usage = VK_BUFFER_USAGE_INDEX_BUFFER_BIT;
-    buffer_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-    if (vkCreateBuffer(device, &buffer_info, NULL, &index_buffer)!=VK_SUCCESS)
-        vk_error("Failed to create index buffer!");
-    
-    VkMemoryRequirements mem_req = {0};
-    vkGetBufferMemoryRequirements(device, index_buffer, &mem_req);
-    
-    VkMemoryAllocateInfo alloc_info = {0};
-    alloc_info.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-    alloc_info.allocationSize = mem_req.size;
-    alloc_info.memoryTypeIndex = find_mem_type(mem_req.memoryTypeBits, 
-                                               VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-    if (vkAllocateMemory(device, &alloc_info, NULL, &index_buffer_memory)!=VK_SUCCESS)
-        vk_error("Failed to allocate index buffer memory!");
-    vkBindBufferMemory(device, index_buffer, index_buffer_memory, 0);
+	u32 buf_size = sizeof(cube_indices[0]) * array_count(cube_indices);
+    create_buffer(buf_size, VK_BUFFER_USAGE_INDEX_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+                      VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,&index_buffer, &index_buffer_memory);
     
     void *data;
-    vkMapMemory(device, index_buffer_memory, 0, buffer_info.size, 0, &data);
-    memcpy(data, indices, buffer_info.size);
+    vkMapMemory(device, index_buffer_memory, 0, buf_size, 0, &data);
+    memcpy(data, cube_indices, buf_size);
     vkUnmapMemory(device, index_buffer_memory);
 }
 
