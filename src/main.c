@@ -21,37 +21,27 @@ internal s32 window_h = 600;
  -offscreen rendering
  -pipeline recreation
  */
+ 
+typedef struct VulkanLayer
+{}VulkanLayer;
 
-
-
-VkInstance instance; //connection between application and the vulkan library 
-
-//[SPEC]: A single complete implementation of Vulkan available to the host.
-VkPhysicalDevice physical_device = VK_NULL_HANDLE; //the Physical Device (the GPU Vulkan will use)
-
-//[SPEC]: An instance of that implementation with its own state and resources independent of other logical devices.
-VkDevice device; //the Logical Device
-
-//[SPEC]: Creating a logical device also creates the queues associated with that device.
-VkQueue graphics_queue; //handle to graphics queue (for submitting RENDER command buffers)
-VkQueue present_queue; //handle to present queue
-
-
-//[SPEC]: A Native platform surface or window object.
-VkSurfaceKHR surface; //an abstract type of surface to present rendered images to
-
-//[SPEC]: Provides the ability to present rendering results to a _surface_.
+VkInstance instance;
+VkPhysicalDevice physical_device;
+VkDevice device;
+VkSurfaceKHR surface;
+//---------------------------------
 VkSwapchainKHR swapchain;//an abstraction for an array of presentable images associated with a surface
-
 VkImage *swapchain_images;//handles to the images inside the swapchain!!
 u32 swapchain_image_count;
 VkFormat swapchain_image_format;
 VkExtent2D swapchain_extent;
-//[SPEC]: Contiguous range of image subresources + additional metadata for accessing ??
 VkImageView *swapchain_image_views;
-//[SPEC]: Framebuffers represent a collection of specific memory attachments that a render pass needs.
 VkFramebuffer *swapchain_framebuffers; //check https://stackoverflow.com/questions/39557141/what-is-the-difference-between-framebuffer-and-image-in-vulkan
+//----------------------------------
 
+//[SPEC]: Creating a logical device also creates the queues associated with that device.
+VkQueue graphics_queue; //handle to graphics queue (for submitting RENDER command buffers)
+VkQueue present_queue; //handle to present queue
 
 //[SPEC]: Shader modules contain shader code (in SPIR-V format) + entry point
 VkShaderModule vert_shader_module;
@@ -123,7 +113,15 @@ const u32 enable_validation_layers = TRUE;
 
 const char *device_extensions[] = {VK_KHR_SWAPCHAIN_EXTENSION_NAME}; 
 
-
+#define VK_CHECK(x)                                                 \
+	do                                                              \
+	{                                                               \
+		VkResult err = x;                                           \
+		if (err)                                                    \
+		{                                                           \
+			printf("[%i]Detected Vulkan error: %i \n",__LINE__, err);            \
+		}                                                           \
+	} while (0);
 typedef struct UniformBufferObject
 {
     mat4 model;
@@ -308,10 +306,7 @@ internal void create_instance(void) {
 	create_info.enabledLayerCount = 0;
 
     
-	VkResult res = vkCreateInstance(&create_info, NULL, &instance);
-    
-	if (res != VK_SUCCESS)
-		vk_error("Failed to create Instance!");
+	VK_CHECK(vkCreateInstance(&create_info, NULL, &instance));
 	
     
 	//(OPTIONAL): extension support
@@ -504,8 +499,7 @@ internal void create_swapchain(void)
     create_info.clipped = VK_TRUE;
     create_info.oldSwapchain = VK_NULL_HANDLE;
     
-    if (vkCreateSwapchainKHR(device, &create_info, NULL, &swapchain) != VK_SUCCESS)
-        vk_error("Failed to create swapchain!");
+    VK_CHECK(vkCreateSwapchainKHR(device, &create_info, NULL, &swapchain));
     
     vkGetSwapchainImagesKHR(device, swapchain, &image_count, NULL);
     swapchain_images = malloc(sizeof(VkImage) * image_count);
@@ -530,8 +524,7 @@ internal VkImageView create_image_view(VkImage image, VkFormat format,  VkImageA
 	view_info.subresourceRange.levelCount = 1;
 	view_info.subresourceRange.baseArrayLayer = 0;
 	view_info.subresourceRange.layerCount = 1;
-	if (vkCreateImageView(device, &view_info, NULL, &image_view) != VK_SUCCESS)
-		vk_error("Failed to create texture's image view!");
+	VK_CHECK(vkCreateImageView(device, &view_info, NULL, &image_view));
 	return image_view;
 }
 
@@ -578,8 +571,7 @@ internal void create_logical_device(void)
     else
         create_info.enabledLayerCount = 0;
     
-    if (vkCreateDevice(physical_device, &create_info, NULL, &device) != VK_SUCCESS)
-        vk_error("Failed to create logical device!!");
+    VK_CHECK(vkCreateDevice(physical_device, &create_info, NULL, &device));
     
     
     vkGetDeviceQueue(device, indices.graphics_family, 0, &graphics_queue);
@@ -593,8 +585,7 @@ internal VkShaderModule create_shader_module(char *code, u32 size)
 	create_info.codeSize = size;
 	create_info.pCode = (u32*)code;
 	VkShaderModule shader_module;
-	if (vkCreateShaderModule(device, &create_info, NULL, &shader_module) != VK_SUCCESS)
-		vk_error("Error creating some shader!");
+	VK_CHECK(vkCreateShaderModule(device, &create_info, NULL, &shader_module));
 	return shader_module;
 }
 
@@ -610,9 +601,7 @@ internal void create_descriptor_sets(void)
     alloc_info.pSetLayouts = layouts;
     
     descriptor_sets = malloc(sizeof(VkDescriptorSet) * swapchain_image_count);
-    if (vkAllocateDescriptorSets(device, &alloc_info, descriptor_sets) != VK_SUCCESS) {
-        vk_error("Failed to allocate descriptor sets!");
-    }
+    VK_CHECK(vkAllocateDescriptorSets(device, &alloc_info, descriptor_sets));
     
     for (size_t i = 0; i < swapchain_image_count; i++) {
         VkDescriptorBufferInfo buffer_info = {0};
@@ -660,8 +649,7 @@ internal void create_descriptor_pool(void)
     pool_info.pPoolSizes = pool_size;
     pool_info.maxSets = swapchain_image_count;
     
-    if (vkCreateDescriptorPool(device, &pool_info, NULL, &descriptor_pool)!=VK_SUCCESS)
-        vk_error("Failed to create descriptor pool!");
+    VK_CHECK(vkCreateDescriptorPool(device, &pool_info, NULL, &descriptor_pool));
 }
 
 internal void create_descriptor_set_layout(u32 buf_count, u32 binding, VkDescriptorSetLayout *layout)
@@ -688,8 +676,7 @@ internal void create_descriptor_set_layout(u32 buf_count, u32 binding, VkDescrip
     layout_info.bindingCount = array_count(bindings);
     layout_info.pBindings = bindings;
     
-    if (vkCreateDescriptorSetLayout(device, &layout_info, NULL, layout) != VK_SUCCESS)
-        vk_error("Failed to create a valid descriptor set layout!");
+    VK_CHECK(vkCreateDescriptorSetLayout(device, &layout_info, NULL, layout));
     
 }
 
@@ -832,8 +819,7 @@ internal void create_graphics_pipeline(void)
     pipeline_layout_info.pSetLayouts = &descriptor_set_layout;
     pipeline_layout_info.pushConstantRangeCount = 0;
     pipeline_layout_info.pPushConstantRanges = NULL;
-    if (vkCreatePipelineLayout(device, &pipeline_layout_info, NULL, &pipeline_layout) != VK_SUCCESS)
-        vk_error("Error creating pipeline!");
+    VK_CHECK(vkCreatePipelineLayout(device, &pipeline_layout_info, NULL, &pipeline_layout));
     
     //---GRAPHICS PIPELINE CREATION---
     VkGraphicsPipelineCreateInfo pipeline_info = {0};
@@ -858,8 +844,7 @@ internal void create_graphics_pipeline(void)
     pipeline_info.basePipelineHandle = VK_NULL_HANDLE;
     pipeline_info.basePipelineIndex = -1;
     
-    if (vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &pipeline_info, NULL, &graphics_pipeline)!=VK_SUCCESS)
-        vk_error("Failed to create graphics pipeline!!");
+    VK_CHECK(vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &pipeline_info, NULL, &graphics_pipeline));
 }
 
 internal void create_render_pass(void)
@@ -920,8 +905,7 @@ internal void create_render_pass(void)
     dependency.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
     render_pass_info.dependencyCount = 1;
     render_pass_info.pDependencies = &dependency;
-    if (vkCreateRenderPass(device, &render_pass_info, NULL, &render_pass)!=VK_SUCCESS)
-        vk_error("Failed to create render pass!");
+    VK_CHECK(vkCreateRenderPass(device, &render_pass_info, NULL, &render_pass));
     
 }
 
@@ -941,8 +925,7 @@ internal void create_framebuffers(void)
         framebuffer_info.height = swapchain_extent.height;
         framebuffer_info.layers = 1;
         
-        if (vkCreateFramebuffer(device, &framebuffer_info, NULL, &swapchain_framebuffers[i]) != VK_SUCCESS)
-            vk_error("Error creating a framebuffer!");
+        VK_CHECK(vkCreateFramebuffer(device, &framebuffer_info, NULL, &swapchain_framebuffers[i]));
         
     }
     
@@ -974,8 +957,7 @@ internal void create_command_pool(void)
     pool_info.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
     pool_info.queueFamilyIndex = queue_family_indices.graphics_family;
     pool_info.flags = 0;
-    if (vkCreateCommandPool(device, &pool_info, NULL, &command_pool) != VK_SUCCESS)
-        vk_error("Failed to create command pool!");
+    VK_CHECK(vkCreateCommandPool(device, &pool_info, NULL, &command_pool));
 }
 
 internal void create_command_buffers(void)
@@ -986,8 +968,7 @@ internal void create_command_buffers(void)
     alloc_info.commandPool = command_pool; //where to allocate the buffer from
     alloc_info.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
     alloc_info.commandBufferCount = swapchain_image_count;
-    if (vkAllocateCommandBuffers(device, &alloc_info, command_buffers)!=VK_SUCCESS)
-        vk_error("Failed to allocate command buffers!");
+    VK_CHECK(vkAllocateCommandBuffers(device, &alloc_info, command_buffers));
     
     //record the command buffers
     for(u32 i = 0; i < swapchain_image_count; ++i)
@@ -996,8 +977,7 @@ internal void create_command_buffers(void)
         begin_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
         begin_info.flags = 0;
         begin_info.pInheritanceInfo = NULL;
-        if (vkBeginCommandBuffer(command_buffers[i], &begin_info)!=VK_SUCCESS)
-            vk_error("Gailed to begin recording command buffer!");
+        VK_CHECK(vkBeginCommandBuffer(command_buffers[i], &begin_info));
         
         
         VkRenderPassBeginInfo renderpass_info = {0};
@@ -1025,8 +1005,7 @@ internal void create_command_buffers(void)
                                 pipeline_layout, 0, 1, &descriptor_sets[i], 0, NULL);
         vkCmdDrawIndexed(command_buffers[i], array_count(cube_indices), 1, 0, 0, 0);
         vkCmdEndRenderPass(command_buffers[i]);
-        if (vkEndCommandBuffer(command_buffers[i]) != VK_SUCCESS)
-            vk_error("Failed to record command buffer!");
+        VK_CHECK(vkEndCommandBuffer(command_buffers[i]));
     }
 }
 
@@ -1050,8 +1029,7 @@ internal void create_buffer(u32 buffer_size,VkBufferUsageFlagBits usage, VkMemor
     buffer_info.size = buffer_size;
     buffer_info.usage = usage;
     buffer_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-    if (vkCreateBuffer(device, &buffer_info, NULL, buf)!=VK_SUCCESS)
-        vk_error("Failed to create vertex buffer!");
+    VK_CHECK(vkCreateBuffer(device, &buffer_info, NULL, buf));
     
     VkMemoryRequirements mem_req = {0};
     vkGetBufferMemoryRequirements(device, *buf, &mem_req);
@@ -1060,8 +1038,7 @@ internal void create_buffer(u32 buffer_size,VkBufferUsageFlagBits usage, VkMemor
     alloc_info.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
     alloc_info.allocationSize = mem_req.size;
     alloc_info.memoryTypeIndex = find_mem_type(mem_req.memoryTypeBits, mem_flags);
-    if (vkAllocateMemory(device, &alloc_info, NULL, mem)!=VK_SUCCESS)
-        vk_error("Failed to allocate vertex buffer memory!");
+    VK_CHECK(vkAllocateMemory(device, &alloc_info, NULL, mem));
     vkBindBufferMemory(device, *buf, *mem, 0);
 }
 
@@ -1084,8 +1061,7 @@ VkImageUsageFlags usage, VkMemoryPropertyFlags properties, VkImage *image, VkDev
 	image_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
 	image_info.samples = VK_SAMPLE_COUNT_1_BIT;
 	image_info.flags = 0;
-	if (vkCreateImage(device, &image_info, NULL, image) != VK_SUCCESS)
-		vk_error("Failed to create Image!");
+	VK_CHECK(vkCreateImage(device, &image_info, NULL, image));
 	
 	VkMemoryRequirements mem_req;
 	vkGetImageMemoryRequirements(device, *image, &mem_req);
@@ -1094,8 +1070,7 @@ VkImageUsageFlags usage, VkMemoryPropertyFlags properties, VkImage *image, VkDev
 	alloc_info.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
 	alloc_info.allocationSize = mem_req.size;
 	alloc_info.memoryTypeIndex = find_mem_type(mem_req.memoryTypeBits, properties);
-    if (vkAllocateMemory(device, &alloc_info, NULL, image_memory)!=VK_SUCCESS)
-		vk_error("Error allocating image memory!");
+    VK_CHECK(vkAllocateMemory(device, &alloc_info, NULL, image_memory));
 	vkBindImageMemory(device, *image, *image_memory, 0);
 }
 
@@ -1350,10 +1325,9 @@ internal void create_sync_objects(void)
     
     for (u32 i = 0; i < MAX_FRAMES_IN_FLIGHT; ++i)
     {
-        if (vkCreateSemaphore(device, &semaphore_info, NULL, &image_available_semaphores[i])!=VK_SUCCESS || 
-            vkCreateSemaphore(device, &semaphore_info, NULL, &render_finished_semaphores[i])!=VK_SUCCESS ||
-            vkCreateFence(device, &fence_info, NULL, &in_flight_fences[i]) != VK_SUCCESS)
-            vk_error("Failed to create sync objects for some frame!");
+        VK_CHECK(vkCreateSemaphore(device, &semaphore_info, NULL, &image_available_semaphores[i])|| 
+            vkCreateSemaphore(device, &semaphore_info, NULL, &render_finished_semaphores[i])||
+            vkCreateFence(device, &fence_info, NULL, &in_flight_fences[i]));
     }
 }
 
@@ -1436,8 +1410,7 @@ internal void create_texture_sampler(void)
 	sampler_info.mipLodBias = 0.0f;
 	sampler_info.minLod = 0.0f;
 	sampler_info.maxLod = 0.0f;
-	if (vkCreateSampler(device, &sampler_info, NULL, &texture_sampler) !=VK_SUCCESS)
-		vk_error("Failed to create texture sampler!");
+	VK_CHECK(vkCreateSampler(device, &sampler_info, NULL, &texture_sampler));
 }
 
 internal int vulkan_init(void) {
@@ -1510,8 +1483,7 @@ internal void draw_frame(void)
     submit_info.signalSemaphoreCount = 1;
     submit_info.pSignalSemaphores = signal_semaphores;
     vkResetFences(device, 1, &in_flight_fences[current_frame]);
-    if (vkQueueSubmit(graphics_queue, 1, &submit_info, in_flight_fences[current_frame])!=VK_SUCCESS)
-        vk_error("Failed to submit draw command buffer!");
+    VK_CHECK(vkQueueSubmit(graphics_queue, 1, &submit_info, in_flight_fences[current_frame]));
     //[2]: Return the image to the swapchain for presentation
     VkPresentInfoKHR present_info = {0};
     present_info.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
