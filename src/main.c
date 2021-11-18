@@ -42,6 +42,16 @@ typedef struct VulkanLayer
 	VkImageView *swapchain_image_views;
 	VkFramebuffer *swapchain_framebuffers; //check https://stackoverflow.com/questions/39557141/what-is-the-difference-between-framebuffer-and-image-in-vulkan
 	//----------------------------------
+	//these should be coupled at some point :P
+	VkImage depth_image;
+	VkDeviceMemory depth_image_memory;
+	VkImageView depth_image_view;
+	
+	
+	VkCommandPool command_pool;
+	VkCommandBuffer *command_buffers;
+	
+	VkRenderPass render_pass;
 }VulkanLayer;
 global VulkanLayer vl;
 
@@ -59,7 +69,7 @@ VkShaderModule vert_shader_module;
 VkShaderModule frag_shader_module;
 
 //[SPEC]: A collection of attachments, subpasses, and dependencies between the subpasses
-VkRenderPass render_pass; //we need to _begin_ a render pass at the start of rendering and _end_ before submitting to Queue
+ //we need to _begin_ a render pass at the start of rendering and _end_ before submitting to Queue
 
 //[SPEC]:
 VkDescriptorSetLayout descriptor_set_layout;
@@ -71,14 +81,13 @@ VkPipelineLayout pipeline_layout;
 //[SPEC]: An object that encompasses the configuration of the entire GPU for the draw
 VkPipeline graphics_pipeline;
 
-//[SPEC]: Objects from which _command buffer memory_ is allocated from
-VkCommandPool command_pool;
+
 
 VkDescriptorPool descriptor_pool;
 VkDescriptorSet *descriptor_sets;
 
 //[SPEC]: Object used to record commands which can then be submitted to a device queue for execution
-VkCommandBuffer *command_buffers;
+
 
 const int MAX_FRAMES_IN_FLIGHT = 2;
 //[SPEC]: synchronization primitive that can be used to insert a dependency between queue operations/host
@@ -98,10 +107,7 @@ VkDeviceMemory index_buffer_memory;
 VkDeviceMemory *uniform_buffer_memories;
 VkBuffer *uniform_buffers;
 
-//these should be coupled at some point :P
-VkImage depth_image;
-VkDeviceMemory depth_image_memory;
-VkImageView depth_image_view;
+
 
 //these should be coupled!!!!
 VkImage texture_image;
@@ -441,7 +447,7 @@ internal VkSurfaceFormatKHR choose_swap_surface_format(SwapChainSupportDetails d
 internal VkPresentModeKHR choose_swap_present_mode(SwapChainSupportDetails details)
 {
     return VK_PRESENT_MODE_FIFO_KHR;
-    //return VK_PRESENT_MODE_IMMEDIATE_KHR;
+    return VK_PRESENT_MODE_IMMEDIATE_KHR;
 }
 
 internal VkExtent2D choose_swap_extent(SwapChainSupportDetails details)
@@ -850,7 +856,7 @@ internal void create_graphics_pipeline(void)
     //[2]: define pipeline layout
     pipeline_info.layout = pipeline_layout;
     //[3]: define the render pass
-    pipeline_info.renderPass = render_pass;
+    pipeline_info.renderPass = vl.render_pass;
     pipeline_info.subpass = 0; //index of subpass where this pipeline will be used (the first and only rn)
     pipeline_info.basePipelineHandle = VK_NULL_HANDLE;
     pipeline_info.basePipelineIndex = -1;
@@ -858,7 +864,7 @@ internal void create_graphics_pipeline(void)
     VK_CHECK(vkCreateGraphicsPipelines(vl.device, VK_NULL_HANDLE, 1, &pipeline_info, NULL, &graphics_pipeline));
 }
 
-internal void create_render_pass(void)
+internal void vl_create_render_pass(void)
 {
     VkAttachmentDescription color_attachment = {0};
     color_attachment.format = vl.swapchain_image_format;
@@ -916,20 +922,20 @@ internal void create_render_pass(void)
     dependency.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
     render_pass_info.dependencyCount = 1;
     render_pass_info.pDependencies = &dependency;
-    VK_CHECK(vkCreateRenderPass(vl.device, &render_pass_info, NULL, &render_pass));
+    VK_CHECK(vkCreateRenderPass(vl.device, &render_pass_info, NULL, &vl.render_pass));
     
 }
 
-internal void create_framebuffers(void)
+internal void vl_create_framebuffers(void)
 {
     vl.swapchain_framebuffers = malloc(sizeof(VkFramebuffer) * vl.swapchain_image_count); 
     for (u32 i = 0; i < vl.swapchain_image_count; ++i)
     {
-        VkImageView attachments[] = {vl.swapchain_image_views[i], depth_image_view};
+        VkImageView attachments[] = {vl.swapchain_image_views[i], vl.depth_image_view};
         
         VkFramebufferCreateInfo framebuffer_info = {0};
         framebuffer_info.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
-        framebuffer_info.renderPass = render_pass; //VkFramebuffers need a render pass?
+        framebuffer_info.renderPass = vl.render_pass; //VkFramebuffers need a render pass?
         framebuffer_info.attachmentCount = array_count(attachments);
         framebuffer_info.pAttachments = attachments;
         framebuffer_info.width = vl.swapchain_extent.width;
@@ -961,25 +967,25 @@ internal VkFormat find_supported_format(VkFormat *candidates, VkImageTiling tili
 }
 
 
-internal void create_command_pool(void)
+internal void vl_create_command_pool(void)
 {
     QueueFamilyIndices queue_family_indices = find_queue_families(vl.physical_device);
     VkCommandPoolCreateInfo pool_info = {0};
     pool_info.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
     pool_info.queueFamilyIndex = queue_family_indices.graphics_family;
     pool_info.flags = 0;
-    VK_CHECK(vkCreateCommandPool(vl.device, &pool_info, NULL, &command_pool));
+    VK_CHECK(vkCreateCommandPool(vl.device, &pool_info, NULL, &vl.command_pool));
 }
 
-internal void create_command_buffers(void)
+internal void vl_create_command_buffers(void)
 {
-    command_buffers = malloc(sizeof(VkCommandBuffer) * vl.swapchain_image_count);
+    vl.command_buffers = malloc(sizeof(VkCommandBuffer) * vl.swapchain_image_count);
     VkCommandBufferAllocateInfo alloc_info = {0};
     alloc_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
-    alloc_info.commandPool = command_pool; //where to allocate the buffer from
+    alloc_info.commandPool = vl.command_pool; //where to allocate the buffer from
     alloc_info.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
     alloc_info.commandBufferCount = vl.swapchain_image_count;
-    VK_CHECK(vkAllocateCommandBuffers(vl.device, &alloc_info, command_buffers));
+    VK_CHECK(vkAllocateCommandBuffers(vl.device, &alloc_info, vl.command_buffers));
     
     //record the command buffers
     for(u32 i = 0; i < vl.swapchain_image_count; ++i)
@@ -988,12 +994,12 @@ internal void create_command_buffers(void)
         begin_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
         begin_info.flags = 0;
         begin_info.pInheritanceInfo = NULL;
-        VK_CHECK(vkBeginCommandBuffer(command_buffers[i], &begin_info));
+        VK_CHECK(vkBeginCommandBuffer(vl.command_buffers[i], &begin_info));
         
         
         VkRenderPassBeginInfo renderpass_info = {0};
         renderpass_info.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
-        renderpass_info.renderPass = render_pass;
+        renderpass_info.renderPass = vl.render_pass;
         renderpass_info.framebuffer = vl.swapchain_framebuffers[i]; //we bind a _framebuffer_ to a render pass
         renderpass_info.renderArea.offset = (VkOffset2D){0,0};
         renderpass_info.renderArea.extent = vl.swapchain_extent;
@@ -1003,30 +1009,31 @@ internal void create_command_buffers(void)
 		clear_values[1].depthStencil = (VkClearDepthStencilValue){1.0f, 0};
         renderpass_info.clearValueCount = array_count(clear_values);
         renderpass_info.pClearValues = &clear_values;
-        vkCmdBeginRenderPass(command_buffers[i], &renderpass_info, VK_SUBPASS_CONTENTS_INLINE);
+        vkCmdBeginRenderPass(vl.command_buffers[i], &renderpass_info, VK_SUBPASS_CONTENTS_INLINE);
         
-        vkCmdBindPipeline(command_buffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, graphics_pipeline);
+        vkCmdBindPipeline(vl.command_buffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, graphics_pipeline);
         
         VkBuffer vertex_buffers[] = {vertex_buffer};
         VkDeviceSize offsets[] = {0};
-        vkCmdBindVertexBuffers(command_buffers[i], 0, 1, vertex_buffers, offsets);
-        vkCmdBindIndexBuffer(command_buffers[i], index_buffer, 0, VK_INDEX_TYPE_UINT32);
+        vkCmdBindVertexBuffers(vl.command_buffers[i], 0, 1, vertex_buffers, offsets);
+        vkCmdBindIndexBuffer(vl.command_buffers[i], index_buffer, 0, VK_INDEX_TYPE_UINT32);
         
-        vkCmdBindDescriptorSets(command_buffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, 
+        vkCmdBindDescriptorSets(vl.command_buffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, 
                                 pipeline_layout, 0, 1, &descriptor_sets[i], 0, NULL);
-        vkCmdDrawIndexed(command_buffers[i], array_count(cube_indices), 1, 0, 0, 0);
-        vkCmdEndRenderPass(command_buffers[i]);
-        VK_CHECK(vkEndCommandBuffer(command_buffers[i]));
+        vkCmdDrawIndexed(vl.command_buffers[i], array_count(cube_indices), 1, 0, 0, 0);
+        vkCmdEndRenderPass(vl.command_buffers[i]);
+        VK_CHECK(vkEndCommandBuffer(vl.command_buffers[i]));
     }
 }
 
+#define TYPE_OK(TYPE_FILTER, FILTER_INDEX) (TYPE_FILTER & (1 << FILTER_INDEX)) 
 internal u32 find_mem_type(u32 type_filter, VkMemoryPropertyFlags properties)
 {
     VkPhysicalDeviceMemoryProperties mem_properties;
     vkGetPhysicalDeviceMemoryProperties(vl.physical_device, &mem_properties);
     for (u32 i = 0; i < mem_properties.memoryTypeCount; ++i)
     {
-        if (type_filter & (1 << i) && 
+        if (TYPE_OK(type_filter, i) && 
             (mem_properties.memoryTypes[i].propertyFlags & properties) == properties)
             return i;
     }
@@ -1092,7 +1099,7 @@ internal VkCommandBuffer begin_single_time_commands(void)
 	VkCommandBufferAllocateInfo alloc_info = {0};
 	alloc_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
 	alloc_info.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-	alloc_info.commandPool = command_pool;
+	alloc_info.commandPool = vl.command_pool;
 	alloc_info.commandBufferCount = 1;
 	
 	VkCommandBuffer command_buffer;
@@ -1116,7 +1123,7 @@ internal void end_single_time_commands(VkCommandBuffer command_buffer)
 	
 	vkQueueSubmit(vl.graphics_queue, 1, &submit_info, VK_NULL_HANDLE);
 	vkQueueWaitIdle(vl.graphics_queue);
-	vkFreeCommandBuffers(vl.device, command_pool, 1, &command_buffer);
+	vkFreeCommandBuffers(vl.device, vl.command_pool, 1, &command_buffer);
 }
 
 //compies from one VkBuffer to another
@@ -1272,13 +1279,13 @@ internal VkFormat find_depth_format(void)
     
 }
 
-internal void create_depth_resources(void)
+internal void vl_create_depth_resources(void)
 {
 	VkFormat depth_format = find_depth_format();
 	create_image(vl.swapchain_extent.width, vl.swapchain_extent.height, 
 		depth_format, VK_IMAGE_TILING_OPTIMAL, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT, 
-		VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, &depth_image, &depth_image_memory);
-	depth_image_view = create_image_view(depth_image, depth_format, VK_IMAGE_ASPECT_DEPTH_BIT);
+		VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, &vl.depth_image, &vl.depth_image_memory);
+	vl.depth_image_view = create_image_view(vl.depth_image, depth_format, VK_IMAGE_ASPECT_DEPTH_BIT);
 }
 
 internal void create_vertex_buffer(void)
@@ -1351,15 +1358,15 @@ internal void framebuffer_resize_callback(void){framebuffer_resized = TRUE;}
 
 internal void vl_cleanup_swapchain(void)
 {
-	vkDestroyImageView(vl.device, depth_image_view, NULL);
-    vkDestroyImage(vl.device, depth_image, NULL);
-    vkFreeMemory(vl.device, depth_image_memory, NULL);
+	vkDestroyImageView(vl.device, vl.depth_image_view, NULL);
+    vkDestroyImage(vl.device, vl.depth_image, NULL);
+    vkFreeMemory(vl.device, vl.depth_image_memory, NULL);
     for (u32 i = 0; i < vl.swapchain_image_count; ++i)
         vkDestroyFramebuffer(vl.device, vl.swapchain_framebuffers[i], NULL);
     //vkFreeCommandBuffers(vl.device, command_pool, vl.swapchain_image_count, command_buffers);
     vkDestroyPipeline(vl.device, graphics_pipeline, NULL);
     vkDestroyPipelineLayout(vl.device, pipeline_layout, NULL);
-    vkDestroyRenderPass(vl.device, render_pass, NULL);
+    vkDestroyRenderPass(vl.device, vl.render_pass, NULL);
     for (u32 i = 0; i < vl.swapchain_image_count; ++i)
         vkDestroyImageView(vl.device, vl.swapchain_image_views[i], NULL);
     vkDestroySwapchainKHR(vl.device, vl.swapchain, NULL);
@@ -1386,16 +1393,16 @@ internal void vl_recreate_swapchain(void)
     vl_cleanup_swapchain();
     vl_create_swapchain();
     vl_create_swapchain_image_views();
-    create_render_pass();
+    vl_create_render_pass();
     create_uniform_buffers();
     create_descriptor_pool();
     create_descriptor_sets();
     
     
     create_graphics_pipeline();
-	create_depth_resources();
-    create_framebuffers();
-    create_command_buffers();
+	vl_create_depth_resources();
+    vl_create_framebuffers();
+    vl_create_command_buffers();
 }
 
 internal void create_texture_sampler(void)
@@ -1432,15 +1439,15 @@ internal void vulkan_layer_init(void)
     vl_create_logical_device();
     vl_create_swapchain();
     vl_create_swapchain_image_views();
+	vl_create_render_pass();
+	vl_create_depth_resources();
+	vl_create_framebuffers();
+    vl_create_command_pool();
 }
 internal int vulkan_init(void) {
 	vulkan_layer_init();
-    create_render_pass();
     create_descriptor_set_layout(1, 0, &descriptor_set_layout);
     create_graphics_pipeline();
-    create_depth_resources();
-	create_framebuffers();
-    create_command_pool();
 	create_texture_image();
 	texture_image_view = create_image_view(texture_image, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_ASPECT_COLOR_BIT);
     create_texture_sampler();
@@ -1450,7 +1457,7 @@ internal int vulkan_init(void) {
     create_descriptor_pool();
     create_descriptor_sets();
     
-    create_command_buffers();
+    vl_create_command_buffers();
     create_sync_objects();
 	return 1;
 }
@@ -1493,7 +1500,7 @@ internal void draw_frame(void)
     submit_info.pWaitSemaphores = wait_semaphores;
     submit_info.pWaitDstStageMask = wait_stages;
     submit_info.commandBufferCount = 1;
-    submit_info.pCommandBuffers = &command_buffers[image_index];
+    submit_info.pCommandBuffers = &vl.command_buffers[image_index];
     VkSemaphore signal_semaphores[] = {render_finished_semaphores[current_frame]};
     submit_info.signalSemaphoreCount = 1;
     submit_info.pSignalSemaphores = signal_semaphores;
@@ -1576,7 +1583,7 @@ internal void cleanup(void)
         vkDestroySemaphore(vl.device, image_available_semaphores[i], NULL);
         vkDestroyFence(vl.device, in_flight_fences[i], NULL);
     }
-    vkDestroyCommandPool(vl.device, command_pool, NULL);
+    vkDestroyCommandPool(vl.device, vl.command_pool, NULL);
     vkDestroyDevice(vl.device, NULL);
     vkDestroySurfaceKHR(vl.instance, vl.surface, NULL);
     vkDestroyInstance(vl.instance, NULL);
