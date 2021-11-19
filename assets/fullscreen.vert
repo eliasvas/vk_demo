@@ -5,7 +5,6 @@
 
 layout (location = 0) out vec3 f_color;
 layout (location = 1) out vec2 f_tex_coord;
-layout(location = 2) in vec3 f_normal;
 
 layout(binding = 0) uniform UniformBufferObject {
     mat4 model;
