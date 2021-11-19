@@ -1090,27 +1090,27 @@ internal void vl_create_command_pool(void)
 
 internal void render_cube(VkCommandBuffer command_buf, u32 image_index)
 {
-	
+	/*
 	VkCommandBufferBeginInfo begin_info = {0};
     begin_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
     begin_info.flags = 0;
     begin_info.pInheritanceInfo = NULL;
     VK_CHECK(vkBeginCommandBuffer(command_buf, &begin_info));
         
-        
+     
     VkRenderPassBeginInfo renderpass_info = {0};
     renderpass_info.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
     renderpass_info.renderPass = vl.render_pass;
     renderpass_info.framebuffer = vl.swapchain_framebuffers[image_index]; //we bind a _framebuffer_ to a render pass
     renderpass_info.renderArea.offset = (VkOffset2D){0,0};
     renderpass_info.renderArea.extent = vl.swapchain_extent;
-		
 	VkClearValue clear_values[2] = {0};
 	clear_values[0].color = (VkClearColorValue){{0.0f, 0.0f, 0.0f, 1.0f}};
 	clear_values[1].depthStencil = (VkClearDepthStencilValue){1.0f, 0};
     renderpass_info.clearValueCount = array_count(clear_values);
     renderpass_info.pClearValues = &clear_values;
     vkCmdBeginRenderPass(command_buf, &renderpass_info, VK_SUBPASS_CONTENTS_INLINE);
+	*/	
         
 	vkCmdBindPipeline(command_buf, VK_PIPELINE_BIND_POINT_GRAPHICS, vl.base_pipeline);
 		
@@ -1122,8 +1122,17 @@ internal void render_cube(VkCommandBuffer command_buf, u32 image_index)
     vkCmdBindDescriptorSets(vl.command_buffers[image_index], VK_PIPELINE_BIND_POINT_GRAPHICS, 
                                 vl.base_pipeline_layout, 0, 1, &descriptor_sets[image_index], 0, NULL);
     vkCmdDrawIndexed(command_buf, array_count(cube_indices), 1, 0, 0, 0);
-    vkCmdEndRenderPass(command_buf);
-    VK_CHECK(vkEndCommandBuffer(command_buf));
+	
+    
+    //VK_CHECK(vkEndCommandBuffer(command_buf));
+}
+
+
+internal void render_fullscreen(VkCommandBuffer command_buf, u32 image_index)
+{    
+	vkCmdBindPipeline(command_buf, VK_PIPELINE_BIND_POINT_GRAPHICS, vl.fullscreen_pipeline);
+	
+    vkCmdDraw(command_buf, 4, 1, 0, 0);
 }
 
 internal void vl_create_command_buffers(void)
@@ -1605,9 +1614,37 @@ internal void draw_frame(void)
 	//we reset the command buffer (so we can put new info in to submit)
 	VK_CHECK(vkResetCommandBuffer(vl.command_buffers[image_index], VK_COMMAND_BUFFER_RESET_RELEASE_RESOURCES_BIT));
 	
-	//we render the scene onto the command buffer
-	render_cube(vl.command_buffers[image_index], image_index);
+	//----BEGIN RENDER PASS----
+	VkCommandBufferBeginInfo begin_info = {0};
+    begin_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+    begin_info.flags = 0;
+    begin_info.pInheritanceInfo = NULL;
+    VK_CHECK(vkBeginCommandBuffer(vl.command_buffers[image_index], &begin_info));
 	
+	VkRenderPassBeginInfo renderpass_info = {0};
+    renderpass_info.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+    renderpass_info.renderPass = vl.render_pass;
+    renderpass_info.framebuffer = vl.swapchain_framebuffers[image_index]; //we bind a _framebuffer_ to a render pass
+    renderpass_info.renderArea.offset = (VkOffset2D){0,0};
+    renderpass_info.renderArea.extent = vl.swapchain_extent;
+	VkClearValue clear_values[2] = {0};
+	clear_values[0].color = (VkClearColorValue){{0.0f, 0.0f, 0.0f, 1.0f}};
+	clear_values[1].depthStencil = (VkClearDepthStencilValue){1.0f, 0};
+    renderpass_info.clearValueCount = array_count(clear_values);
+    renderpass_info.pClearValues = &clear_values;
+    vkCmdBeginRenderPass(vl.command_buffers[image_index], &renderpass_info, VK_SUBPASS_CONTENTS_INLINE);
+	
+	//we render the scene onto the command buffer
+	
+	
+	render_cube(vl.command_buffers[image_index], image_index);
+	render_fullscreen(vl.command_buffers[image_index], image_index);
+	
+	
+	vkCmdEndRenderPass(vl.command_buffers[image_index]);
+    VK_CHECK(vkEndCommandBuffer(vl.command_buffers[image_index]));
+	//----END RENDER PASS----
+
     //mark image as used by _this frame_
     images_in_flight[image_index] = in_flight_fences[current_frame];
     
