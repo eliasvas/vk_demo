@@ -5,7 +5,7 @@
 #define PLATFORM_MAC      2
 #define PLATFORM_UNIX     3
 
-
+/*
 #if defined(_WIN32)
 #define PLATFORM PLATFORM_WINDOWS
 #elif defined(__APPLE__)
@@ -13,6 +13,7 @@
 #else
 #define PLATFORM PLATFORM_UNIX
 #endif
+*/
 
 #if defined(PLATFORM_WINDOWS)
 #include "windows.h"
@@ -40,13 +41,6 @@ typedef double    f64;
 typedef int32_t   b32;
 typedef char      b8;
 
-#if defined(_WIN32)
-#define PLATFORM_WINDOWS
-#elif defined(__APPLE__)
-#define PLATFORM_APPLE
-#else
-#define PLATFORM_LINUX
-#endif
 
 
 #if !defined(internal)

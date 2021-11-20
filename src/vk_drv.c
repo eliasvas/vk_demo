@@ -7,6 +7,8 @@
 #include "vkwin.h"
 Window wnd;
 
+
+#define STBI_NO_SIMD
 #define STB_IMAGE_IMPLEMENTATION
 #include "ext/stb_image.h"
 
@@ -974,6 +976,7 @@ internal void create_descriptor_set_layout(u32 buf_count, u32 binding, VkDescrip
     
 }
 
+internal VkFormat find_depth_format(void);
 
 internal void vl_create_render_pass(void)
 {
@@ -1520,7 +1523,7 @@ internal void vl_recreate_swapchain(void)
     create_descriptor_sets();
     
     
-	vl_base_pipelines_init(NULL);
+	vl_base_pipelines_init();
 	vl_create_depth_resources();
     vl_create_framebuffers();
     vl_create_command_buffers();
@@ -1631,7 +1634,7 @@ internal void draw_frame(void)
 	clear_values[0].color = (VkClearColorValue){{0.0f, 0.0f, 0.0f, 1.0f}};
 	clear_values[1].depthStencil = (VkClearDepthStencilValue){1.0f, 0};
     renderpass_info.clearValueCount = array_count(clear_values);
-    renderpass_info.pClearValues = &clear_values;
+    renderpass_info.pClearValues = clear_values;
     vkCmdBeginRenderPass(vl.command_buffers[image_index], &renderpass_info, VK_SUBPASS_CONTENTS_INLINE);
 	
 	//we render the scene onto the command buffer
