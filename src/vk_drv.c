@@ -394,13 +394,17 @@ VkDeviceMemory index_buffer_memory;
 VkDeviceMemory *uniform_buffer_memories;
 VkBuffer *uniform_buffers;
 
+typedef struct Texture {
+		VkSampler sampler;
+		VkImage image;
+		VkImageLayout image_layout;
+		VkDeviceMemory device_mem;
+		VkImageView view;
+		u32 width, height;
+		u32 mip_levels;
+} Texture;
 
-
-//these should be coupled!!!!
-VkImage texture_image;
-VkDeviceMemory texture_image_memory;
-VkImageView texture_image_view;
-VkSampler texture_sampler;
+global Texture sample_texture;
 
 global current_frame = 0;
 global framebuffer_resized = FALSE;
@@ -907,8 +911,8 @@ internal void create_descriptor_sets(void)
 		
 		VkDescriptorImageInfo image_info = {0};
 		image_info.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-		image_info.imageView = texture_image_view;
-		image_info.sampler = texture_sampler;
+		image_info.imageView = sample_texture.view;
+		image_info.sampler = sample_texture.sampler;
         
         VkWriteDescriptorSet descriptor_writes[2] = {0};
         
@@ -1346,48 +1350,6 @@ internal void copy_buffer_to_image(VkBuffer buffer, VkImage image, u32 width, u3
     end_single_time_commands(command_buf);
 }
 
-internal void create_texture_image(void)
-{
-	//[0]: we read an image and store all the pixels in a pointer
-	s32 tex_w, tex_h, tex_c;
-	stbi_uc *pixels = stbi_load("../assets/test.png", &tex_w, &tex_h, &tex_c, STBI_rgb_alpha);
-	VkDeviceSize image_size = tex_w * tex_h * 4;
-	
-	VkBuffer image_data_buffer;
-	VkDeviceMemory image_data_buffer_memory;
-	
-	if (!pixels)
-		vk_error("Error loading image!");
-	//[1]: we craete a "transfer src" buffer to put the pixels in gpu memory
-	create_buffer(image_size, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, 
-	VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, &image_data_buffer, &image_data_buffer_memory);
-	//[2]: we fill the buffer with image data
-	void *data;
-	vkMapMemory(vl.device, image_data_buffer_memory, 0, image_size, 0, &data);
-	memcpy(data, pixels, image_size);
-	vkUnmapMemory(vl.device, image_data_buffer_memory);
-	//[3]: we free the cpu side image, we don't need it
-	stbi_image_free(pixels);
-	//[4]: we create the VkImage that is undefined right now
-	create_image(tex_w, tex_h, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_TILING_OPTIMAL, VK_IMAGE_USAGE_TRANSFER_DST_BIT 
-		| VK_IMAGE_USAGE_SAMPLED_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, &texture_image, &texture_image_memory);
-	
-	
-	//[5]: we transition the images layout from undefined to dst_optimal
-	transition_image_layout(texture_image, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
-
-	//[6]: we copy the buffer we created in [1] to our image of the correct format (R8G8B8A8_SRGB)
-	copy_buffer_to_image(image_data_buffer, texture_image, tex_w, tex_h);
-	
-	//[7]: we transition the image layout so that it can be read by a shader
-	transition_image_layout(texture_image, VK_FORMAT_R8G8B8A8_SRGB, 
-		VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
-		
-	//[8]:cleanup the buffers (all data is now in the image)
-	vkDestroyBuffer(vl.device, image_data_buffer, NULL);
-	vkFreeMemory(vl.device, image_data_buffer_memory, NULL);
-}
-
 //checks whether our depth format has a stencil component
 internal u32 has_stencil_component(VkFormat format)
 {
@@ -1529,7 +1491,7 @@ internal void vl_recreate_swapchain(void)
     vl_create_command_buffers();
 }
 
-internal void create_texture_sampler(void)
+internal void create_texture_sampler(VkSampler *sampler)
 {
 	VkSamplerCreateInfo sampler_info = {0};
 	sampler_info.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
@@ -1552,8 +1514,62 @@ internal void create_texture_sampler(void)
 	sampler_info.mipLodBias = 0.0f;
 	sampler_info.minLod = 0.0f;
 	sampler_info.maxLod = 0.0f;
-	VK_CHECK(vkCreateSampler(vl.device, &sampler_info, NULL, &texture_sampler));
+	VK_CHECK(vkCreateSampler(vl.device, &sampler_info, NULL, sampler));
 }
+
+//TODO(ilias): add mip-mapping + option for staging buffer + native linear encoding
+internal Texture create_texture_image(char *filename, VkFormat format)
+{
+	Texture tex;
+	//[0]: we read an image and store all the pixels in a pointer
+	s32 tex_w, tex_h, tex_c;
+	stbi_uc *pixels = stbi_load(filename, &tex_w, &tex_h, &tex_c, STBI_rgb_alpha);
+	VkDeviceSize image_size = tex_w * tex_h * 4;
+	
+	VkBuffer image_data_buffer;
+	VkDeviceMemory image_data_buffer_memory;
+	
+	if (!pixels)
+		vk_error("Error loading image!");
+	//[1]: we craete a "transfer src" buffer to put the pixels in gpu memory
+	create_buffer(image_size, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, 
+	VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, &image_data_buffer, &image_data_buffer_memory);
+	//[2]: we fill the buffer with image data
+	void *data;
+	vkMapMemory(vl.device, image_data_buffer_memory, 0, image_size, 0, &data);
+	memcpy(data, pixels, image_size);
+	vkUnmapMemory(vl.device, image_data_buffer_memory);
+	//[3]: we free the cpu side image, we don't need it
+	stbi_image_free(pixels);
+	//[4]: we create the VkImage that is undefined right now
+	create_image(tex_w, tex_h, format, VK_IMAGE_TILING_OPTIMAL, VK_IMAGE_USAGE_TRANSFER_DST_BIT 
+		| VK_IMAGE_USAGE_SAMPLED_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, &tex.image, &tex.device_mem);
+	
+	
+	//[5]: we transition the images layout from undefined to dst_optimal
+	transition_image_layout(tex.image, format, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+
+	//[6]: we copy the buffer we created in [1] to our image of the correct format (R8G8B8A8_SRGB)
+	copy_buffer_to_image(image_data_buffer, tex.image, tex_w, tex_h);
+	
+	//[7]: we transition the image layout so that it can be read by a shader
+	transition_image_layout(tex.image, format, 
+		VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+		
+	//[8]:cleanup the buffers (all data is now in the image)
+	vkDestroyBuffer(vl.device, image_data_buffer, NULL);
+	vkFreeMemory(vl.device, image_data_buffer_memory, NULL);
+	
+	create_texture_sampler(&tex.sampler);
+	
+	tex.view = create_image_view(tex.image, format, VK_IMAGE_ASPECT_COLOR_BIT);
+	tex.mip_levels = 0;
+	tex.width = tex_w;
+	tex.height = tex_h;
+	
+	return tex;
+}
+
 internal void vulkan_layer_init(void)
 {
 	vl = (VulkanLayer){0};
@@ -1573,9 +1589,7 @@ internal int vulkan_init(void) {
 	vulkan_layer_init();
     create_descriptor_set_layout(1, 0, &descriptor_set_layout);
 	vl_base_pipelines_init();
-	create_texture_image();
-	texture_image_view = create_image_view(texture_image, VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_ASPECT_COLOR_BIT);
-    create_texture_sampler();
+	sample_texture = create_texture_image("../assets/test.png",VK_FORMAT_R8G8B8A8_SRGB);
 	create_vertex_buffer();
     create_index_buffer();
     create_uniform_buffers();
@@ -1726,10 +1740,6 @@ internal void cleanup(void)
 {
     vkDeviceWaitIdle(vl.device);  //so we dont close the window while commands are still being executed
     vl_cleanup_swapchain();
-	vkDestroySampler(vl.device, texture_sampler, NULL);
-	vkDestroyImageView(vl.device, texture_image_view, NULL);
-	vkDestroyImage(vl.device, texture_image, NULL);
-    vkFreeMemory(vl.device, texture_image_memory, NULL);
     vkDestroyDescriptorSetLayout(vl.device, descriptor_set_layout, NULL);
     //vkDestroyBuffer(vl.device, vertex_buffer, NULL); //validation layer? @check
     vkFreeMemory(vl.device, vertex_buffer_memory, NULL);
