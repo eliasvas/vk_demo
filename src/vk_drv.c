@@ -69,6 +69,72 @@ typedef struct VulkanLayer
 }VulkanLayer;
 global VulkanLayer vl;
 
+//-----------------BUFFER-------------------
+typedef struct DataBuffer
+{
+	VkDevice device;
+	VkBuffer buffer;
+	VkDeviceMemory mem;
+	VkDescriptorBufferInfo desc;
+	VkDeviceSize size;
+	VkDeviceSize alignment;
+	VkBufferUsageFlags usage_flags;
+	VkMemoryPropertyFlags memory_property_flags;
+	void *mapped;
+}DataBuffer;
+
+internal void buf_init(void); //this is handled by create_buffer!
+
+//attaches ALLOCATED memory block to buffer!
+internal void buf_bind(DataBuffer *buf, VkDevice offset)
+{
+	vkBindBufferMemory(buf->device, buf->buffer, buf->mem, offset);
+}
+
+internal buf_copy_to(DataBuffer *src,void *data, VkDeviceSize size)
+{
+	assert(src->mapped);
+	memcpy(src->mapped, data, size);
+}
+
+internal void buf_setup_descriptor(DataBuffer *buf, VkDeviceSize size, VkDeviceSize offset)
+{
+	buf->desc.offset = offset;
+	buf->desc.buffer = buf->buffer;
+	buf->desc.range = size;
+}
+
+internal VkResult buf_map(DataBuffer *buf, VkDeviceSize size, VkDeviceSize offset)
+{
+	return vkMapMemory(buf->device, buf->mem, offset, size, 0, &buf->mapped);//@check @check @check @check
+}
+
+internal void buf_unmap(DataBuffer *buf)
+{
+	if (buf->mapped)
+	{
+		vkUnmapMemory(buf->device, buf->mem);
+		buf->mapped = NULL;
+	}
+}
+
+internal void buf_destroy(DataBuffer *buf)
+{
+	if (buf->buffer)
+	{
+		vkDestroyBuffer(buf->device, buf->buffer, NULL);
+	}
+	if (buf->mem)
+	{
+		vkFreeMemory(buf->device, buf->mem, NULL);
+	}
+}
+
+//-----------------BUFFER-------------------
+
+
+
+
 //-----------------------------------------------------------------------------------------
 typedef struct PipelineBuilder
 {
@@ -365,13 +431,6 @@ internal void vl_base_pipelines_init(void)
 
 
 
-
-
-
-VkPipeline graphics_pipeline;
-
-
-
 VkDescriptorPool descriptor_pool;
 VkDescriptorSet *descriptor_sets;
 
@@ -384,12 +443,12 @@ VkSemaphore *render_finished_semaphores;
 VkFence *in_flight_fences;
 VkFence *images_in_flight;
 
-//[SPEC]: Linear array of data which are used for various purposes by binding them to a pipeline via descriptor sets 
-VkBuffer vertex_buffer;
-//[SPEC]: A Vulkan device operates on data in device memory via memory objects
-VkDeviceMemory vertex_buffer_memory;
-VkBuffer index_buffer;
-VkDeviceMemory index_buffer_memory;
+//VkBuffer vertex_buffer;
+//VkDeviceMemory vertex_buffer_memory;
+
+DataBuffer vertex_buffer_real;
+DataBuffer index_buffer_real;
+
 
 VkDeviceMemory *uniform_buffer_memories;
 VkBuffer *uniform_buffers;
@@ -969,7 +1028,7 @@ internal void create_descriptor_set_layout(u32 buf_count, u32 binding, VkDescrip
 	sampler_layout_binding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
 	
 	
-	VkDescriptorSetLayoutBinding bindings[2] =  {ubo_layout_binding, sampler_layout_binding};
+	VkDescriptorSetLayoutBinding bindings[2] = {ubo_layout_binding, sampler_layout_binding};
     
     VkDescriptorSetLayoutCreateInfo layout_info = {0};
     layout_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
@@ -1121,10 +1180,10 @@ internal void render_cube(VkCommandBuffer command_buf, u32 image_index)
         
 	vkCmdBindPipeline(command_buf, VK_PIPELINE_BIND_POINT_GRAPHICS, vl.base_pipeline);
 		
-    VkBuffer vertex_buffers[] = {vertex_buffer};
+    VkBuffer vertex_buffers[] = {vertex_buffer_real.buffer};
     VkDeviceSize offsets[] = {0};
     vkCmdBindVertexBuffers(command_buf, 0, 1, vertex_buffers, offsets);
-    vkCmdBindIndexBuffer(command_buf, index_buffer, 0, VK_INDEX_TYPE_UINT32);
+    vkCmdBindIndexBuffer(command_buf, index_buffer_real.buffer, 0, VK_INDEX_TYPE_UINT32);
         
     vkCmdBindDescriptorSets(vl.command_buffers[image_index], VK_PIPELINE_BIND_POINT_GRAPHICS, 
                                 vl.base_pipeline_layout, 0, 1, &descriptor_sets[image_index], 0, NULL);
@@ -1167,7 +1226,7 @@ internal u32 find_mem_type(u32 type_filter, VkMemoryPropertyFlags properties)
     vk_error("Failed to find suitable memory type!");
 }
 
-internal void create_buffer(u32 buffer_size,VkBufferUsageFlagBits usage, VkMemoryPropertyFlagBits mem_flags, VkBuffer *buf, VkDeviceMemory *mem)
+internal void create_buffer_simple(u32 buffer_size,VkBufferUsageFlagBits usage, VkMemoryPropertyFlagBits mem_flags, VkBuffer *buf, VkDeviceMemory *mem)
 {
     VkBufferCreateInfo buffer_info = {0};
     buffer_info.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
@@ -1187,6 +1246,49 @@ internal void create_buffer(u32 buffer_size,VkBufferUsageFlagBits usage, VkMemor
     vkBindBufferMemory(vl.device, *buf, *mem, 0);
 }
 
+
+internal void create_buffer(u32 buffer_size,VkBufferUsageFlagBits usage, VkMemoryPropertyFlagBits mem_flags, DataBuffer *buf, VkDeviceSize size, void *data)
+{
+	buf->device = vl.device;
+	
+	//[0]: create buffer handle
+    VkBufferCreateInfo buffer_info = {0};
+    buffer_info.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+    buffer_info.size = buffer_size;
+    buffer_info.usage = usage;
+    buffer_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    VK_CHECK(vkCreateBuffer(vl.device, &buffer_info, NULL, &(buf->buffer) ));
+    
+	//[1]: create the memory nacking up the buffer handle
+    VkMemoryRequirements mem_req = {0};
+    vkGetBufferMemoryRequirements(buf->device, (buf->buffer), &mem_req);
+    
+    VkMemoryAllocateInfo alloc_info = {0};
+    alloc_info.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    alloc_info.allocationSize = mem_req.size;
+    alloc_info.memoryTypeIndex = find_mem_type(mem_req.memoryTypeBits, mem_flags);
+    VK_CHECK(vkAllocateMemory(vl.device, &alloc_info, NULL, &buf->mem));
+	
+	//[2]: set some important data fields
+	buf->alignment = mem_req.alignment;
+	buf->size = size;
+	buf->usage_flags = usage;
+	//buf->memory_property_flags = properties; //HOST_COHERENT HOST_VISIBLE etc.
+	
+	//[3]:if data pointer has data, we map the buffer and copy those data over to OUR buffer
+	if (data != NULL)
+	{
+		VK_CHECK(buf_map(buf, size, 0));
+		memcpy(buf->mapped, data, size);
+		buf_unmap(buf);
+	}
+	
+	//[4]: we initialize a default descriptor that covers the whole buffer size
+	buf_setup_descriptor(buf, size, 0);
+	
+	//[5]: we attach the memory to the buffer object
+    vkBindBufferMemory(vl.device, (buf->buffer), (buf->mem), 0);
+}
 
 internal void create_image(u32 width, u32 height, VkFormat format, VkImageTiling tiling, 
 VkImageUsageFlags usage, VkMemoryPropertyFlags properties, VkImage *image, VkDeviceMemory *image_memory)
@@ -1373,18 +1475,7 @@ internal void vl_create_depth_resources(void)
 	vl.depth_image_view = create_image_view(vl.depth_image, depth_format, VK_IMAGE_ASPECT_DEPTH_BIT);
 }
 
-internal void create_vertex_buffer(void)
-{
-	Vertex *cube_vertices = cube_build_verts();
-    u32 buf_size = sizeof(Vertex) * 24;
-    create_buffer(buf_size, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
-                      VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,&vertex_buffer, &vertex_buffer_memory);
-    
-    void *data;
-    vkMapMemory(vl.device, vertex_buffer_memory, 0, buf_size, 0, &data);
-    memcpy(data, cube_vertices, buf_size);
-    vkUnmapMemory(vl.device, vertex_buffer_memory);
-}
+
 
 internal void create_uniform_buffers(void)
 {
@@ -1394,21 +1485,11 @@ internal void create_uniform_buffers(void)
     
     for (u32 i = 0; i < vl.swapchain_image_count; ++i)
     {
-        create_buffer(buf_size, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+        create_buffer_simple(buf_size, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
                       VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,&uniform_buffers[i], &uniform_buffer_memories[i]);
     }
 }
-internal void create_index_buffer(void)
-{
-	u32 buf_size = sizeof(cube_indices[0]) * array_count(cube_indices);
-    create_buffer(buf_size, VK_BUFFER_USAGE_INDEX_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
-                      VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,&index_buffer, &index_buffer_memory);
-    
-    void *data;
-    vkMapMemory(vl.device, index_buffer_memory, 0, buf_size, 0, &data);
-    memcpy(data, cube_indices, buf_size);
-    vkUnmapMemory(vl.device, index_buffer_memory);
-}
+
 
 
 internal void create_sync_objects(void)
@@ -1448,8 +1529,6 @@ internal void vl_cleanup_swapchain(void)
     vkFreeMemory(vl.device, vl.depth_image_memory, NULL);
     for (u32 i = 0; i < vl.swapchain_image_count; ++i)
         vkDestroyFramebuffer(vl.device, vl.swapchain_framebuffers[i], NULL);
-    //vkFreeCommandBuffers(vl.device, command_pool, vl.swapchain_image_count, command_buffers);
-    vkDestroyPipeline(vl.device, graphics_pipeline, NULL);
 	vkDestroyPipeline(vl.device, vl.fullscreen_pipeline, NULL);
     vkDestroyPipelineLayout(vl.device, pipeline_layout, NULL);
     vkDestroyRenderPass(vl.device, vl.render_pass, NULL);
@@ -1526,39 +1605,32 @@ internal Texture create_texture_image(char *filename, VkFormat format)
 	stbi_uc *pixels = stbi_load(filename, &tex_w, &tex_h, &tex_c, STBI_rgb_alpha);
 	VkDeviceSize image_size = tex_w * tex_h * 4;
 	
-	VkBuffer image_data_buffer;
-	VkDeviceMemory image_data_buffer_memory;
 	
+	//[2]: we create a buffer to hold the pixel information (we also fill it)
+	DataBuffer idb;
 	if (!pixels)
 		vk_error("Error loading image!");
-	//[1]: we craete a "transfer src" buffer to put the pixels in gpu memory
 	create_buffer(image_size, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, 
-	VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, &image_data_buffer, &image_data_buffer_memory);
-	//[2]: we fill the buffer with image data
-	void *data;
-	vkMapMemory(vl.device, image_data_buffer_memory, 0, image_size, 0, &data);
-	memcpy(data, pixels, image_size);
-	vkUnmapMemory(vl.device, image_data_buffer_memory);
+	VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, &idb, image_size, pixels);
 	//[3]: we free the cpu side image, we don't need it
 	stbi_image_free(pixels);
 	//[4]: we create the VkImage that is undefined right now
 	create_image(tex_w, tex_h, format, VK_IMAGE_TILING_OPTIMAL, VK_IMAGE_USAGE_TRANSFER_DST_BIT 
 		| VK_IMAGE_USAGE_SAMPLED_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, &tex.image, &tex.device_mem);
 	
-	
 	//[5]: we transition the images layout from undefined to dst_optimal
 	transition_image_layout(tex.image, format, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
 
 	//[6]: we copy the buffer we created in [1] to our image of the correct format (R8G8B8A8_SRGB)
-	copy_buffer_to_image(image_data_buffer, tex.image, tex_w, tex_h);
+	copy_buffer_to_image(idb.buffer, tex.image, tex_w, tex_h);
 	
 	//[7]: we transition the image layout so that it can be read by a shader
 	transition_image_layout(tex.image, format, 
 		VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
 		
 	//[8]:cleanup the buffers (all data is now in the image)
-	vkDestroyBuffer(vl.device, image_data_buffer, NULL);
-	vkFreeMemory(vl.device, image_data_buffer_memory, NULL);
+	buf_destroy(&idb);
+	
 	
 	create_texture_sampler(&tex.sampler);
 	
@@ -1585,13 +1657,28 @@ internal void vulkan_layer_init(void)
     vl_create_command_pool();
 	
 }
+
 internal int vulkan_init(void) {
 	vulkan_layer_init();
     create_descriptor_set_layout(1, 0, &descriptor_set_layout);
 	vl_base_pipelines_init();
 	sample_texture = create_texture_image("../assets/test.png",VK_FORMAT_R8G8B8A8_SRGB);
-	create_vertex_buffer();
-    create_index_buffer();
+
+	
+	Vertex *cube_vertices = cube_build_verts();
+	//create vertex buffer
+	create_buffer(sizeof(Vertex) * 24,VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, 
+	VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, 
+	&vertex_buffer_real, sizeof(Vertex) * 24, cube_vertices);
+	
+	
+	
+	//create index buffer
+	create_buffer(sizeof(cube_indices[0]) * array_count(cube_indices),VK_BUFFER_USAGE_INDEX_BUFFER_BIT, 
+	VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, 
+	&index_buffer_real, sizeof(cube_indices[0]) * array_count(cube_indices), cube_indices);
+	
+	
     create_uniform_buffers();
     create_descriptor_pool();
     create_descriptor_sets();
@@ -1741,12 +1828,10 @@ internal void cleanup(void)
     vkDeviceWaitIdle(vl.device);  //so we dont close the window while commands are still being executed
     vl_cleanup_swapchain();
     vkDestroyDescriptorSetLayout(vl.device, descriptor_set_layout, NULL);
-    //vkDestroyBuffer(vl.device, vertex_buffer, NULL); //validation layer? @check
-    vkFreeMemory(vl.device, vertex_buffer_memory, NULL);
-    vkDestroyBuffer(vl.device, vertex_buffer, NULL);
     
-    vkFreeMemory(vl.device, index_buffer_memory, NULL);
-    vkDestroyBuffer(vl.device, index_buffer, NULL); //validation layer? @check
+	buf_destroy(&index_buffer_real);
+	buf_destroy(&vertex_buffer_real);
+	
     for (u32 i = 0; i < MAX_FRAMES_IN_FLIGHT; ++i)
     {
         vkDestroySemaphore(vl.device, render_finished_semaphores[i], NULL);
