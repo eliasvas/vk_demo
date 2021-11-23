@@ -83,7 +83,6 @@ typedef struct DataBuffer
 	void *mapped;
 }DataBuffer;
 
-internal void buf_init(void); //this is handled by create_buffer!
 
 //attaches ALLOCATED memory block to buffer!
 internal void buf_bind(DataBuffer *buf, VkDevice offset)
@@ -448,10 +447,8 @@ VkFence *images_in_flight;
 
 DataBuffer vertex_buffer_real;
 DataBuffer index_buffer_real;
+DataBuffer *uniform_buffers;
 
-
-VkDeviceMemory *uniform_buffer_memories;
-VkBuffer *uniform_buffers;
 
 typedef struct Texture {
 		VkSampler sampler;
@@ -964,7 +961,7 @@ internal void create_descriptor_sets(void)
     
     for (size_t i = 0; i < vl.swapchain_image_count; i++) {
         VkDescriptorBufferInfo buffer_info = {0};
-        buffer_info.buffer = uniform_buffers[i];
+        buffer_info.buffer = uniform_buffers[i].buffer;
         buffer_info.offset = 0;
         buffer_info.range = sizeof(UniformBufferObject);
 		
@@ -1247,14 +1244,14 @@ internal void create_buffer_simple(u32 buffer_size,VkBufferUsageFlagBits usage, 
 }
 
 
-internal void create_buffer(u32 buffer_size,VkBufferUsageFlagBits usage, VkMemoryPropertyFlagBits mem_flags, DataBuffer *buf, VkDeviceSize size, void *data)
+internal void create_buffer(VkBufferUsageFlagBits usage, VkMemoryPropertyFlagBits mem_flags, DataBuffer *buf, VkDeviceSize size, void *data)
 {
 	buf->device = vl.device;
 	
 	//[0]: create buffer handle
     VkBufferCreateInfo buffer_info = {0};
     buffer_info.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
-    buffer_info.size = buffer_size;
+    buffer_info.size = size;
     buffer_info.usage = usage;
     buffer_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
     VK_CHECK(vkCreateBuffer(vl.device, &buffer_info, NULL, &(buf->buffer) ));
@@ -1480,13 +1477,12 @@ internal void vl_create_depth_resources(void)
 internal void create_uniform_buffers(void)
 {
     VkDeviceSize buf_size = sizeof(UniformBufferObject);
-    uniform_buffers = (VkBuffer*)malloc(sizeof(VkBuffer) * vl.swapchain_image_count);
-    uniform_buffer_memories = (VkDeviceMemory*)malloc(sizeof(VkDeviceMemory) * vl.swapchain_image_count);
+    uniform_buffers = (DataBuffer*)malloc(sizeof(DataBuffer) * vl.swapchain_image_count);
     
     for (u32 i = 0; i < vl.swapchain_image_count; ++i)
     {
-        create_buffer_simple(buf_size, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
-                      VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,&uniform_buffers[i], &uniform_buffer_memories[i]);
+        create_buffer(VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+                      VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,&uniform_buffers[i], buf_size, NULL);
     }
 }
 
@@ -1540,8 +1536,7 @@ internal void vl_cleanup_swapchain(void)
     vkDestroyShaderModule(vl.device, vl.base_frag, NULL);
     for (u32 i = 0; i < vl.swapchain_image_count; ++i)
     {
-        vkFreeMemory(vl.device, uniform_buffer_memories[i], NULL);
-        vkDestroyBuffer(vl.device, uniform_buffers[i], NULL);
+        buf_destroy(&uniform_buffers[i]);
     }
     vkDestroyDescriptorPool(vl.device, descriptor_pool, NULL);
 }
@@ -1610,7 +1605,7 @@ internal Texture create_texture_image(char *filename, VkFormat format)
 	DataBuffer idb;
 	if (!pixels)
 		vk_error("Error loading image!");
-	create_buffer(image_size, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, 
+	create_buffer(VK_BUFFER_USAGE_TRANSFER_SRC_BIT, 
 	VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, &idb, image_size, pixels);
 	//[3]: we free the cpu side image, we don't need it
 	stbi_image_free(pixels);
@@ -1662,19 +1657,20 @@ internal int vulkan_init(void) {
 	vulkan_layer_init();
     create_descriptor_set_layout(1, 0, &descriptor_set_layout);
 	vl_base_pipelines_init();
+	
 	sample_texture = create_texture_image("../assets/test.png",VK_FORMAT_R8G8B8A8_SRGB);
 
 	
 	Vertex *cube_vertices = cube_build_verts();
-	//create vertex buffer
-	create_buffer(sizeof(Vertex) * 24,VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, 
+	//create vertex buffer @check first param
+	create_buffer(VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, 
 	VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, 
 	&vertex_buffer_real, sizeof(Vertex) * 24, cube_vertices);
 	
 	
 	
 	//create index buffer
-	create_buffer(sizeof(cube_indices[0]) * array_count(cube_indices),VK_BUFFER_USAGE_INDEX_BUFFER_BIT, 
+	create_buffer(VK_BUFFER_USAGE_INDEX_BUFFER_BIT, 
 	VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, 
 	&index_buffer_real, sizeof(cube_indices[0]) * array_count(cube_indices), cube_indices);
 	
@@ -1693,11 +1689,12 @@ internal void update_uniform_buffer(u32 image_index)
     ubo.model = mat4_mul(mat4_translate(v3(0,0,-4)),mat4_rotate( 360.0f * sin(get_time()) ,v3(0,1,0)));
     ubo.view = look_at(v3(0,0,0), v3(0,0,-1), v3(0,1,0));
     ubo.proj = perspective_proj_vk(45.0f,window_w/(f32)window_h, 0.1, 10);
-    
-    void* data;
-    vkMapMemory(vl.device, uniform_buffer_memories[image_index], 0, sizeof(ubo), 0, &data);
-    memcpy(data, &ubo, sizeof(ubo));
-    vkUnmapMemory(vl.device, uniform_buffer_memories[image_index]);
+
+	void *data = &ubo;
+	
+	VK_CHECK(buf_map(&uniform_buffers[image_index], uniform_buffers[image_index].size, 0));
+	memcpy(uniform_buffers[image_index].mapped, &ubo, sizeof(ubo));
+	buf_unmap(&uniform_buffers[image_index]);
 }
 
 internal void draw_frame(void)
