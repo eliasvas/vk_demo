@@ -8,5 +8,5 @@ REM The fully code is compatible with C++, to compile just remove /Tc from the c
 
 if not exist build mkdir build
 pushd build
-"../tcc/tcc" -Wall -Wl,-subsystem=windows -m64 -IC:/VulkanSDK/1.2.189.2/Include/ -LC:/VulkanSDK/1.2.189.2/Lib/ -lvulkan-1 -luser32 -lgdi32  ../src/vk_drv.c -o app.exe
+"../tcc/tcc" -Wall -Wl,-subsystem=windows -m64 -IC:/VulkanSDK/1.2.189.2/Include/ -LC:/VulkanSDK/1.2.189.2/Lib/ -lvulkan-1 -luser32 -lgdi32  ../src/vk_base.c -o app.exe
 popd

@@ -15,5 +15,5 @@ REM The fully code is compatible with C++, to compile just remove /Tc from the c
 
 if not exist build mkdir build
 pushd build
-"cl.exe" %compile_flags% %build_options% /MD /Tc ..\src\vk_drv.c -I../src/ -I../src/ext/GLFW/ -IC:/VulkanSDK/1.2.189.2/Include/ /link %link_flags% /out:%application_name%
+"cl.exe" %compile_flags% %build_options% /MD /Tc ..\src\vk_base.c -I../src/ -I../src/ext/GLFW/ -IC:/VulkanSDK/1.2.189.2/Include/ /link %link_flags% /out:%application_name%
 popd
