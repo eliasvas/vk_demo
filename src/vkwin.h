@@ -143,10 +143,12 @@ internal void window_set_resize_callback(Window *wnd, void *func)
 internal LRESULT CALLBACK WndProc( HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam ) {
       switch( message ) {
       case WM_SIZE:
+		break;
       case WM_EXITSIZEMOVE:
         //PostMessage( hWnd, WM_USER + 1, wParam, lParam );
         break;
       case WM_KEYDOWN:
+		break;
       case WM_CLOSE:
 		exit(0);
         //PostMessage( hWnd, WM_USER + 2, wParam, lParam );

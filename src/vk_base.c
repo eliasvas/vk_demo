@@ -12,6 +12,8 @@ Window wnd;
 #define STB_IMAGE_IMPLEMENTATION
 #include "ext/stb_image.h"
 
+#include <spirv_cross_c.h>
+
 internal s32 window_w = 800;
 internal s32 window_h = 600;
 
@@ -36,6 +38,17 @@ typedef struct Swapchain
 	VkFramebuffer *framebuffers;
 	u32 image_count;
 }Swapchain;
+
+
+typedef struct Shader
+{
+	VkShaderModule vert;
+	VkShaderModule frag;
+	VkShaderModule geom;
+	char **params;//???? (wbt layouts?)
+	char **types;
+}Shader;
+
 
 typedef struct VulkanLayer
 {
@@ -73,7 +86,130 @@ typedef struct VulkanLayer
 	VkPipeline base_pipeline;
 	VkPipelineLayout base_pipeline_layout;
 }VulkanLayer;
+
+
 global VulkanLayer vl;
+
+//---------------SPVC---------------
+
+#define SPVC_CHECKED_CALL(x) do { \
+	if ((x) != SPVC_SUCCESS) { \
+		fprintf(stderr, "Failed at line %d.\n", __LINE__); \
+		exit(1); \
+	} \
+} while(0)
+
+static int read_file(const char *path, u32 **buffer, size_t *word_count)
+{
+	long len;
+	FILE *file = fopen(path, "rb");
+
+	if (!file)
+		return -1;
+
+	fseek(file, 0, SEEK_END);
+	len = ftell(file);
+	rewind(file);
+
+	*buffer = malloc(len);
+	if (fread(*buffer, 1, len, file) != (size_t)len)
+	{
+		fclose(file);
+		free(*buffer);
+		return -1;
+	}
+
+	fclose(file);
+	*word_count = len / sizeof(SpvId);
+	return 0;
+}
+internal u32 g_fail_on_error = TRUE;
+
+internal void spv_error_callback(void *userdata, const char *error)
+{
+	(void)userdata;
+	if (g_fail_on_error)
+	{
+		fprintf(stderr, "Error: %s\n", error);
+		exit(1);
+	}
+	else
+		printf("Expected error hit: %s.\n", error);
+}
+internal void dump_resource_list(spvc_compiler compiler, spvc_resources resources, spvc_resource_type type, const char *tag)
+{
+	const spvc_reflected_resource *list = NULL;
+	size_t count = 0;
+	size_t i;
+	SPVC_CHECKED_CALL(spvc_resources_get_resource_list_for_type(resources, type, &list, &count));
+	printf("%s\n", tag);
+	for (i = 0; i < count; i++)
+	{
+		printf("ID: %u, BaseTypeID: %u, TypeID: %u, Name: %s\n", list[i].id, list[i].base_type_id, list[i].type_id,
+		       list[i].name);
+		printf("  Set: %u, Binding: %u\n",
+		       spvc_compiler_get_decoration(compiler, list[i].id, SpvDecorationDescriptorSet),
+		       spvc_compiler_get_decoration(compiler, list[i].id, SpvDecorationBinding));
+	}
+}
+
+internal void dump_resources(spvc_compiler compiler, spvc_resources resources)
+{
+	dump_resource_list(compiler, resources, SPVC_RESOURCE_TYPE_UNIFORM_BUFFER, "UBO");
+	dump_resource_list(compiler, resources, SPVC_RESOURCE_TYPE_STORAGE_BUFFER, "SSBO");
+	dump_resource_list(compiler, resources, SPVC_RESOURCE_TYPE_PUSH_CONSTANT, "Push");
+	dump_resource_list(compiler, resources, SPVC_RESOURCE_TYPE_SEPARATE_SAMPLERS, "Samplers");
+	dump_resource_list(compiler, resources, SPVC_RESOURCE_TYPE_SEPARATE_IMAGE, "Image");
+	dump_resource_list(compiler, resources, SPVC_RESOURCE_TYPE_SAMPLED_IMAGE, "Combined image samplers");
+	dump_resource_list(compiler, resources, SPVC_RESOURCE_TYPE_STAGE_INPUT, "Stage input");
+	dump_resource_list(compiler, resources, SPVC_RESOURCE_TYPE_STAGE_OUTPUT, "Stage output");
+	dump_resource_list(compiler, resources, SPVC_RESOURCE_TYPE_STORAGE_IMAGE, "Storage image");
+	dump_resource_list(compiler, resources, SPVC_RESOURCE_TYPE_SUBPASS_INPUT, "Subpass input");
+}
+
+internal void spvc_dump(const char *filename)
+{
+	spvc_context context = NULL;
+	spvc_parsed_ir ir = NULL;
+	spvc_compiler compiler_glsl = NULL;
+	spvc_compiler_options options = NULL;
+	spvc_resources resources = NULL;
+	spvc_error_callback ecb;
+	char err[256];
+	const spvc_reflected_resource *list = NULL;
+	const char *result = NULL;
+	SpvId *spirv = NULL;
+	size_t count;
+	size_t i;
+	
+	//[0]: we create the context
+	SPVC_CHECKED_CALL(spvc_context_create(&context));
+	//[1]: we set an error callback
+	spvc_context_set_error_callback(context, spv_error_callback, NULL);
+	//[2]: we parse the spirv file
+	u32 vert_size;
+	read_file(filename, &spirv, &vert_size);
+	SPVC_CHECKED_CALL(spvc_context_parse_spirv(context, spirv, vert_size, &ir));
+	//[3]: we hand the ir to a compiler instance 
+	SPVC_CHECKED_CALL(spvc_context_create_compiler(context, SPVC_BACKEND_NONE, ir, SPVC_CAPTURE_MODE_COPY, &compiler_glsl));
+	//[4]: we do some basic reflection
+	SPVC_CHECKED_CALL(spvc_compiler_create_shader_resources(compiler_glsl, &resources));
+	SPVC_CHECKED_CALL(spvc_resources_get_resource_list_for_type(resources, SPVC_RESOURCE_TYPE_UNIFORM_BUFFER, &list, &count));
+	
+	SPVC_CHECKED_CALL(spvc_compiler_create_compiler_options(compiler_glsl, &options));
+	SPVC_CHECKED_CALL(spvc_compiler_install_compiler_options(compiler_glsl, options));
+	
+	SPVC_CHECKED_CALL(spvc_compiler_create_shader_resources(compiler_glsl, &resources));
+	char text[] = "---shader dump---";
+	printf(text);
+	printf("\n");
+	dump_resources(compiler_glsl, resources);
+	for (u32 i =0; i<array_count(text);++i)printf("-");
+	printf("\n");
+	spvc_context_destroy(context);
+}
+//---------------SPVC---------------
+
 
 //-----------------BUFFER-------------------
 typedef struct DataBuffer
@@ -342,7 +478,6 @@ internal VkPipeline build_pipeline(VkDevice device, PipelineBuilder p,VkRenderPa
 
 
 VkDescriptorSetLayout descriptor_set_layout;
-VkPipelineLayout pipeline_layout;
 //-------------------------------------------------------------------------------------------
 
 internal VkShaderModule create_shader_module(char *code, u32 size);
@@ -359,8 +494,8 @@ internal void vl_base_pipelines_init(void)
 	
 	//read the spirv files as binary files
 	u32 vert_size, frag_size;
-	char *vert_shader_code = read_whole_file_binary("fullscreen_vert.spv", &vert_size);
-	char *frag_shader_code = read_whole_file_binary("fullscreen_frag.spv", &frag_size);
+	u32 *vert_shader_code = read_whole_file_binary("fullscreen_vert.spv", &vert_size);
+	u32 *frag_shader_code = read_whole_file_binary("fullscreen_frag.spv", &frag_size);
 	
 	//make shader modules out of those
 	vl.fullscreen_vert= create_shader_module(vert_shader_code, vert_size);
@@ -1532,7 +1667,6 @@ internal void vl_cleanup_swapchain(void)
     for (u32 i = 0; i < vl.swap.image_count; ++i)
         vkDestroyFramebuffer(vl.device, vl.swap.framebuffers[i], NULL);
 	vkDestroyPipeline(vl.device, vl.fullscreen_pipeline, NULL);
-    vkDestroyPipelineLayout(vl.device, pipeline_layout, NULL);
     vkDestroyRenderPass(vl.device, vl.render_pass, NULL);
     for (u32 i = 0; i < vl.swap.image_count; ++i)
         vkDestroyImageView(vl.device, vl.swap.image_views[i], NULL);
@@ -1849,8 +1983,8 @@ internal void cleanup(void)
 }
 
 
-
-int main(void) {
+int main(void) 
+{
 #if defined(PLATFORM_WINDOWS) && defined(NOGLFW)
 	printf("win init\n");
 #else
@@ -1861,10 +1995,13 @@ int main(void) {
 	
     window_set_resize_callback(&wnd, framebuffer_resize_callback);
     
-	if(vulkan_init())printf("Vulkan OK");
+	if(vulkan_init())printf("Vulkan OK\n");
+	
+	spvc_dump("fullscreen_vert.spv");
 	
 	main_loop();
 	
 	cleanup();
+	//spvc_context_destroy(context);
 	return 0;
 }

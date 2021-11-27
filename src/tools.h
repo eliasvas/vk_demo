@@ -1720,7 +1720,7 @@ read_whole_file_binary(char *filename, u32 *size)
 	*size = fsize;
     fseek(f, 0, SEEK_SET);  /* same as rewind(f); */
 
-    char *string = (char*)malloc(fsize + 1);
+    char *string = (char*)malloc(fsize);
     fread(string, 1, fsize, f);
     fclose(f); 
 
