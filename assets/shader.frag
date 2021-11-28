@@ -6,7 +6,7 @@ layout(location = 1) in vec2 f_tex_coord;
 layout(location = 0) out vec4 out_color;
 
 
-layout(binding = 1) uniform sampler2D tex_sampler;
+layout(set = 0, binding = 1) uniform sampler2D tex_sampler;
 
 vec3 dir_light = vec3(-1,1,0.2);
 

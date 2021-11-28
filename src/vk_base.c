@@ -23,7 +23,7 @@ internal s32 window_h = 600;
 		VkResult err = x;                                           \
 		if (err)                                                    \
 		{                                                           \
-			printf("[%i]Detected Vulkan error: %i \n",__LINE__, err);            \
+			printf("[LINE: %i] Detected Vulkan error: %i \n",__LINE__, err);            \
 		}                                                           \
 	} while (0);
 
@@ -40,13 +40,22 @@ typedef struct Swapchain
 }Swapchain;
 
 
+#define MAX_RESOURCES_PER_SHADER 32
+typedef struct ShaderMetaInfo
+{
+	VkDescriptorType resource_types[MAX_RESOURCES_PER_SHADER];
+	u32 resource_names[MAX_RESOURCES_PER_SHADER];
+	
+}ShaderMetaInfo;
+
 typedef struct Shader
 {
-	VkShaderModule vert;
-	VkShaderModule frag;
-	VkShaderModule geom;
-	char **params;//???? (wbt layouts?)
-	char **types;
+	VkShaderModule module;
+	VkShaderStageFlagBits stage;
+	
+	ShaderMetaInfo info;
+	
+	b32 uses_push_constants;
 }Shader;
 
 
@@ -75,14 +84,13 @@ typedef struct VulkanLayer
 	VkRenderPass render_pass;
 	
 
-	
-	VkShaderModule fullscreen_vert;
-	VkShaderModule fullscreen_frag;
+	Shader fullscreen_vert;
+	Shader fullscreen_frag;
 	VkPipeline fullscreen_pipeline;
 	VkPipelineLayout fullscreen_pipeline_layout;
 	
-	VkShaderModule base_vert;
-	VkShaderModule base_frag;
+	Shader base_vert;
+	Shader base_frag;
 	VkPipeline base_pipeline;
 	VkPipelineLayout base_pipeline_layout;
 }VulkanLayer;
@@ -99,30 +107,6 @@ global VulkanLayer vl;
 	} \
 } while(0)
 
-static int read_file(const char *path, u32 **buffer, size_t *word_count)
-{
-	long len;
-	FILE *file = fopen(path, "rb");
-
-	if (!file)
-		return -1;
-
-	fseek(file, 0, SEEK_END);
-	len = ftell(file);
-	rewind(file);
-
-	*buffer = malloc(len);
-	if (fread(*buffer, 1, len, file) != (size_t)len)
-	{
-		fclose(file);
-		free(*buffer);
-		return -1;
-	}
-
-	fclose(file);
-	*word_count = len / sizeof(SpvId);
-	return 0;
-}
 internal u32 g_fail_on_error = TRUE;
 
 internal void spv_error_callback(void *userdata, const char *error)
@@ -187,9 +171,10 @@ internal void spvc_dump(const char *filename)
 	//[1]: we set an error callback
 	spvc_context_set_error_callback(context, spv_error_callback, NULL);
 	//[2]: we parse the spirv file
-	u32 vert_size;
-	read_file(filename, &spirv, &vert_size);
-	SPVC_CHECKED_CALL(spvc_context_parse_spirv(context, spirv, vert_size, &ir));
+	u32 code_size;
+	read_file(filename, &spirv, &code_size);
+	code_size /=sizeof(u32);//because we want word count, not overall size in bytes
+	SPVC_CHECKED_CALL(spvc_context_parse_spirv(context, spirv, code_size, &ir));
 	//[3]: we hand the ir to a compiler instance 
 	SPVC_CHECKED_CALL(spvc_context_create_compiler(context, SPVC_BACKEND_NONE, ir, SPVC_CAPTURE_MODE_COPY, &compiler_glsl));
 	//[4]: we do some basic reflection
@@ -476,6 +461,28 @@ internal VkPipeline build_pipeline(VkDevice device, PipelineBuilder p,VkRenderPa
 	return new_pipeline;
 }
 
+internal VkShaderModule create_shader_module(char *code, u32 size)
+{
+	VkShaderModuleCreateInfo create_info = {0};
+	create_info.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
+	create_info.codeSize = size;
+	create_info.pCode = (u32*)code;
+	VkShaderModule shader_module;
+	VK_CHECK(vkCreateShaderModule(vl.device, &create_info, NULL, &shader_module));
+	return shader_module;
+}
+
+internal void shader_create(VkDevice device, Shader *shader, const char *filename, VkShaderStageFlagBits stage)
+{
+	u32 code_size;
+	u32 *shader_code = NULL;
+	read_file(filename, &shader_code, &code_size);
+	shader->module = create_shader_module(shader_code, code_size);
+	shader->uses_push_constants = FALSE;
+	//shader_reflect(shader_code, &shader->info);
+	shader->stage = stage;
+	free(shader_code);
+}  
 
 VkDescriptorSetLayout descriptor_set_layout;
 //-------------------------------------------------------------------------------------------
@@ -491,20 +498,14 @@ internal void vl_base_pipelines_init(void)
 	
 	VK_CHECK(vkCreatePipelineLayout(vl.device, &pipeline_layout_info, NULL, &vl.fullscreen_pipeline_layout));
 	
-	
-	//read the spirv files as binary files
-	u32 vert_size, frag_size;
-	u32 *vert_shader_code = read_whole_file_binary("fullscreen_vert.spv", &vert_size);
-	u32 *frag_shader_code = read_whole_file_binary("fullscreen_frag.spv", &frag_size);
-	
-	//make shader modules out of those
-	vl.fullscreen_vert= create_shader_module(vert_shader_code, vert_size);
-	vl.fullscreen_frag = create_shader_module(frag_shader_code, frag_size);
+
+	shader_create(vl.device, &vl.fullscreen_vert, "fullscreen_vert.spv", VK_SHADER_STAGE_VERTEX_BIT); 
+	shader_create(vl.device, &vl.fullscreen_frag, "fullscreen_frag.spv", VK_SHADER_STAGE_FRAGMENT_BIT);
 	
 	PipelineBuilder pb = {0};
 	pb.shader_stages_count = 2;
-	pb.shader_stages[0] = pipe_shader_stage_create_info(VK_SHADER_STAGE_VERTEX_BIT, vl.fullscreen_vert);
-	pb.shader_stages[1] = pipe_shader_stage_create_info(VK_SHADER_STAGE_FRAGMENT_BIT, vl.fullscreen_frag);
+	pb.shader_stages[0] = pipe_shader_stage_create_info(vl.fullscreen_vert.stage, vl.fullscreen_vert.module);
+	pb.shader_stages[1] = pipe_shader_stage_create_info(vl.fullscreen_frag.stage, vl.fullscreen_frag.module);
 	
 	pb.vertex_input_info = pipe_vertex_input_state_create_info();
 	pb.input_asm = pipe_input_assembly_create_info(VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST);
@@ -522,18 +523,13 @@ internal void vl_base_pipelines_init(void)
 	VK_CHECK(vkCreatePipelineLayout(vl.device, &pipeline_layout_info, NULL, &vl.base_pipeline_layout));
 	
 	
-	//read the spirv files as binary files
-	vert_size, frag_size;
-	vert_shader_code = read_whole_file_binary("vert.spv", &vert_size);
-	frag_shader_code = read_whole_file_binary("frag.spv", &frag_size);
-	
-	//make shader modules out of those
-	vl.base_vert = create_shader_module(vert_shader_code, vert_size);
-	vl.base_frag  = create_shader_module(frag_shader_code, frag_size);
+
+	shader_create(vl.device, &vl.base_vert, "vert.spv", VK_SHADER_STAGE_VERTEX_BIT); 
+	shader_create(vl.device, &vl.base_frag, "frag.spv", VK_SHADER_STAGE_FRAGMENT_BIT);
 	
 	pb.shader_stages_count = 2;
-	pb.shader_stages[0] = pipe_shader_stage_create_info(VK_SHADER_STAGE_VERTEX_BIT, vl.base_vert);
-	pb.shader_stages[1] = pipe_shader_stage_create_info(VK_SHADER_STAGE_FRAGMENT_BIT, vl.base_frag);
+	pb.shader_stages[0] = pipe_shader_stage_create_info(vl.base_vert.stage, vl.base_vert.module);
+	pb.shader_stages[1] = pipe_shader_stage_create_info(vl.base_frag.stage, vl.base_frag.module);
 	
 	//---VERTEX INPUT---
     VkVertexInputBindingDescription bind_desc = get_bind_desc_test_vert();
@@ -1075,16 +1071,7 @@ internal void vl_create_logical_device(void)
     vkGetDeviceQueue(vl.device, indices.present_family, 0, &vl.present_queue);
 }
 
-internal VkShaderModule create_shader_module(char *code, u32 size)
-{
-	VkShaderModuleCreateInfo create_info = {0};
-	create_info.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
-	create_info.codeSize = size;
-	create_info.pCode = (u32*)code;
-	VkShaderModule shader_module;
-	VK_CHECK(vkCreateShaderModule(vl.device, &create_info, NULL, &shader_module));
-	return shader_module;
-}
+
 
 internal void create_descriptor_sets(void)
 {
@@ -1672,8 +1659,8 @@ internal void vl_cleanup_swapchain(void)
         vkDestroyImageView(vl.device, vl.swap.image_views[i], NULL);
     vkDestroySwapchainKHR(vl.device, vl.swap.swapchain, NULL);
     //these will be recreated at pipeline creation for next swapchain
-    vkDestroyShaderModule(vl.device, vl.base_vert, NULL);
-    vkDestroyShaderModule(vl.device, vl.base_frag, NULL);
+    vkDestroyShaderModule(vl.device, vl.base_vert.module, NULL);
+    vkDestroyShaderModule(vl.device, vl.base_frag.module, NULL);
     for (u32 i = 0; i < vl.swap.image_count; ++i)
     {
         buf_destroy(&uniform_buffers[i]);

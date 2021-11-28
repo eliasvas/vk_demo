@@ -12,6 +12,12 @@ layout(binding = 0) uniform UniformBufferObject {
     mat4 proj;
 } ubo;
 
+layout(set = 1, binding = 4) uniform UniformBufferObject2 {
+    vec3 vec123;
+	vec3 vec234;
+	mat4 some_mat;
+} ubo2;
+
 vec3 colors[3] = vec3[](
     vec3(1.0, 0.0, 0.0),
     vec3(0.0, 1.0, 0.0),

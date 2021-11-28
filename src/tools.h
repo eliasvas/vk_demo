@@ -1,10 +1,13 @@
 #ifndef TOOLS_H
 #define TOOLS_H
 
+#if defined(_WIN32)
 #define PLATFORM_WINDOWS  1
+#elif defined(MACOSX)
 #define PLATFORM_MAC      2
+#else
 #define PLATFORM_UNIX     3
-
+#endif
 /*
 #if defined(_WIN32)
 #define PLATFORM PLATFORM_WINDOWS
@@ -1725,6 +1728,33 @@ read_whole_file_binary(char *filename, u32 *size)
     fclose(f); 
 
     return (char*)string;
+}
+
+
+static int read_file(const char *path, u32 **buffer, size_t *word_count)
+{
+	long len;
+	FILE *file = fopen(path, "rb");
+
+	if (!file)
+		return -1;
+
+	fseek(file, 0, SEEK_END);
+	len = ftell(file);
+	rewind(file);
+
+	*buffer = malloc(len);
+	if (fread(*buffer, 1, len, file) != (size_t)len)
+	{
+		fclose(file);
+		free(*buffer);
+		printf("uhoh couldnt read some file :P\n");
+		return -1;
+	}
+
+	fclose(file);
+	*word_count = len;
+	return 0;
 }
 
 #endif
