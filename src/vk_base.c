@@ -10,9 +10,9 @@ Window wnd;
 
 #define STBI_NO_SIMD
 #define STB_IMAGE_IMPLEMENTATION
-#include "ext/stb_image.h"
+#include "stb_image.h"
 
-#include <spirv_cross_c.h>
+#include "SPIRV/spirv_reflect.h"
 
 internal s32 window_w = 800;
 internal s32 window_h = 600;
@@ -27,7 +27,16 @@ internal s32 window_h = 600;
 		}                                                           \
 	} while (0);
 
-
+#define SPV_CHECK(x)                                                 \
+	do                                                              \
+	{                                                               \
+		SpvReflectResult err = x;                                           \
+		if (err != SPV_REFLECT_RESULT_SUCCESS)                                                    \
+		{                                                           \
+			printf("[LINE: %i] Detected Spv error: %i \n",__LINE__, err);            \
+		}                                                           \
+	} while (0);
+	
 typedef struct Swapchain
 { 
 	VkSwapchainKHR swapchain;
@@ -39,14 +48,112 @@ typedef struct Swapchain
 	u32 image_count;
 }Swapchain;
 
+typedef enum ShaderVarFormat{
+  SHADER_FORMAT_UNDEFINED           =   0, // = VK_FORMAT_UNDEFINED
+  SHADER_FORMAT_R32_UINT            =  98, // = VK_FORMAT_R32_UINT
+  SHADER_FORMAT_R32_SINT            =  99, // = VK_FORMAT_R32_SINT
+  SHADER_FORMAT_R32_SFLOAT          = 100, // = VK_FORMAT_R32_SFLOAT
+  SHADER_FORMAT_R32G32_UINT         = 101, // = VK_FORMAT_R32G32_UINT
+  SHADER_FORMAT_R32G32_SINT         = 102, // = VK_FORMAT_R32G32_SINT
+  SHADER_FORMAT_R32G32_SFLOAT       = 103, // = VK_FORMAT_R32G32_SFLOAT
+  SHADER_FORMAT_R32G32B32_UINT      = 104, // = VK_FORMAT_R32G32B32_UINT
+  SHADER_FORMAT_R32G32B32_SINT      = 105, // = VK_FORMAT_R32G32B32_SINT
+  SHADER_FORMAT_R32G32B32_SFLOAT    = 106, // = VK_FORMAT_R32G32B32_SFLOAT
+  SHADER_FORMAT_R32G32B32A32_UINT   = 107, // = VK_FORMAT_R32G32B32A32_UINT
+  SHADER_FORMAT_R32G32B32A32_SINT   = 108, // = VK_FORMAT_R32G32B32A32_SINT
+  SHADER_FORMAT_R32G32B32A32_SFLOAT = 109, // = VK_FORMAT_R32G32B32A32_SFLOAT
+  SHADER_FORMAT_R64_UINT            = 110, // = VK_FORMAT_R64_UINT
+  SHADER_FORMAT_R64_SINT            = 111, // = VK_FORMAT_R64_SINT
+  SHADER_FORMAT_R64_SFLOAT          = 112, // = VK_FORMAT_R64_SFLOAT
+  SHADER_FORMAT_R64G64_UINT         = 113, // = VK_FORMAT_R64G64_UINT
+  SHADER_FORMAT_R64G64_SINT         = 114, // = VK_FORMAT_R64G64_SINT
+  SHADER_FORMAT_R64G64_SFLOAT       = 115, // = VK_FORMAT_R64G64_SFLOAT
+  SHADER_FORMAT_R64G64B64_UINT      = 116, // = VK_FORMAT_R64G64B64_UINT
+  SHADER_FORMAT_R64G64B64_SINT      = 117, // = VK_FORMAT_R64G64B64_SINT
+  SHADER_FORMAT_R64G64B64_SFLOAT    = 118, // = VK_FORMAT_R64G64B64_SFLOAT
+  SHADER_FORMAT_R64G64B64A64_UINT   = 119, // = VK_FORMAT_R64G64B64A64_UINT
+  SHADER_FORMAT_R64G64B64A64_SINT   = 120, // = VK_FORMAT_R64G64B64A64_SINT
+  SHADER_FORMAT_R64G64B64A64_SFLOAT = 121, // = VK_FORMAT_R64G64B64A64_SFLOAT
+} ShaderVarFormat;
 
+internal u32 get_format_size(ShaderVarFormat format)
+{
+    switch(format)
+    {
+        case SHADER_FORMAT_R32G32B32_SFLOAT:
+            return 3 * sizeof(f32);
+        case SHADER_FORMAT_R32G32_SFLOAT:
+            return 2 * sizeof(f32);
+        default:
+            return 0;
+    }
+}
+
+typedef struct VertexInputAttribute
+{
+    u32 location;
+    u8 name[64];
+    b32 builtin;
+    u32 size; //size of attribute in bytes
+    ShaderVarFormat format;
+}VertexInputAttribute;
 #define MAX_RESOURCES_PER_SHADER 32
 typedef struct ShaderMetaInfo
 {
 	VkDescriptorType resource_types[MAX_RESOURCES_PER_SHADER];
 	u32 resource_names[MAX_RESOURCES_PER_SHADER];
-	
+	u32 input_variable_count;
+
+
+    VertexInputAttribute vertex_input_attributes[MAX_RESOURCES_PER_SHADER];
+    u32 vertex_input_attribute_count;
+
 }ShaderMetaInfo;
+
+internal u32 calc_vertex_input_total_size(ShaderMetaInfo *info)
+{
+    u32 s = 0;
+    for (u32 i = 0; i < info->vertex_input_attribute_count; ++i)
+        s += info->vertex_input_attributes[i].size;
+    return s;
+}
+
+internal VkVertexInputBindingDescription get_bind_desc(ShaderMetaInfo *info)
+{
+    VkVertexInputBindingDescription bind_desc = {0};
+    bind_desc.binding = 0;
+    bind_desc.stride = calc_vertex_input_total_size(info);
+    bind_desc.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;//per-vertex
+    return bind_desc;
+}
+
+internal u32 get_attr_desc(VkVertexInputAttributeDescription *attr_desc, ShaderMetaInfo *info)
+{
+    u32 global_offset = 0;
+    u32 valid_attribs = 0;
+    for (u32 i = 0; i < info->vertex_input_attribute_count; ++i)
+    {
+        for (u32 j = 0; j < info->vertex_input_attribute_count; ++j)
+        {
+            u32 location = info->vertex_input_attributes[i].location;
+            if (location == i)
+            {
+                attr_desc[location].binding = 0;
+                attr_desc[location].location = location; 
+                attr_desc[location].format = info->vertex_input_attributes[i].format;
+                attr_desc[location].offset = global_offset;
+                global_offset+= info->vertex_input_attributes[i].size;
+                valid_attribs++;
+                break;
+            }
+   
+        }
+
+    }
+    //attr_desc[2].offset = offsetof(Vertex, tex_coord);
+    return valid_attribs;
+}
+
 
 typedef struct Shader
 {
@@ -98,103 +205,32 @@ typedef struct VulkanLayer
 
 global VulkanLayer vl;
 
-//---------------SPVC---------------
 
-#define SPVC_CHECKED_CALL(x) do { \
-	if ((x) != SPVC_SUCCESS) { \
-		fprintf(stderr, "Failed at line %d.\n", __LINE__); \
-		exit(1); \
-	} \
-} while(0)
+//------SPIRV_REFLECT------
 
-internal u32 g_fail_on_error = TRUE;
-
-internal void spv_error_callback(void *userdata, const char *error)
+int SpirvReflectExample(const void* spirv_code, size_t spirv_nbytes)
 {
-	(void)userdata;
-	if (g_fail_on_error)
-	{
-		fprintf(stderr, "Error: %s\n", error);
-		exit(1);
-	}
-	else
-		printf("Expected error hit: %s.\n", error);
-}
-internal void dump_resource_list(spvc_compiler compiler, spvc_resources resources, spvc_resource_type type, const char *tag)
-{
-	const spvc_reflected_resource *list = NULL;
-	size_t count = 0;
-	size_t i;
-	SPVC_CHECKED_CALL(spvc_resources_get_resource_list_for_type(resources, type, &list, &count));
-	printf("%s\n", tag);
-	for (i = 0; i < count; i++)
-	{
-		printf("ID: %u, BaseTypeID: %u, TypeID: %u, Name: %s\n", list[i].id, list[i].base_type_id, list[i].type_id,
-		       list[i].name);
-		printf("  Set: %u, Binding: %u\n",
-		       spvc_compiler_get_decoration(compiler, list[i].id, SpvDecorationDescriptorSet),
-		       spvc_compiler_get_decoration(compiler, list[i].id, SpvDecorationBinding));
-	}
+  // Generate reflection data for a shader
+  SpvReflectShaderModule module;
+  SPV_CHECK(spvReflectCreateShaderModule(spirv_nbytes, spirv_code, &module));
+
+  // Enumerate and extract shader's input variables
+  uint32_t var_count = 0;
+  SPV_CHECK(spvReflectEnumerateInputVariables(&module, &var_count, NULL));
+  
+  SpvReflectInterfaceVariable** input_vars =
+    (SpvReflectInterfaceVariable**)malloc(var_count * sizeof(SpvReflectInterfaceVariable*));
+  
+  SPV_CHECK(spvReflectEnumerateInputVariables(&module, &var_count, input_vars));
+
+  // Output variables, descriptor bindings, descriptor sets, and push constants
+  // can be enumerated and extracted using a similar mechanism.
+
+  // Destroy the reflection data when no longer required.
+  spvReflectDestroyShaderModule(&module);
 }
 
-internal void dump_resources(spvc_compiler compiler, spvc_resources resources)
-{
-	dump_resource_list(compiler, resources, SPVC_RESOURCE_TYPE_UNIFORM_BUFFER, "UBO");
-	dump_resource_list(compiler, resources, SPVC_RESOURCE_TYPE_STORAGE_BUFFER, "SSBO");
-	dump_resource_list(compiler, resources, SPVC_RESOURCE_TYPE_PUSH_CONSTANT, "Push");
-	dump_resource_list(compiler, resources, SPVC_RESOURCE_TYPE_SEPARATE_SAMPLERS, "Samplers");
-	dump_resource_list(compiler, resources, SPVC_RESOURCE_TYPE_SEPARATE_IMAGE, "Image");
-	dump_resource_list(compiler, resources, SPVC_RESOURCE_TYPE_SAMPLED_IMAGE, "Combined image samplers");
-	dump_resource_list(compiler, resources, SPVC_RESOURCE_TYPE_STAGE_INPUT, "Stage input");
-	dump_resource_list(compiler, resources, SPVC_RESOURCE_TYPE_STAGE_OUTPUT, "Stage output");
-	dump_resource_list(compiler, resources, SPVC_RESOURCE_TYPE_STORAGE_IMAGE, "Storage image");
-	dump_resource_list(compiler, resources, SPVC_RESOURCE_TYPE_SUBPASS_INPUT, "Subpass input");
-}
-
-internal void spvc_dump(const char *filename)
-{
-	spvc_context context = NULL;
-	spvc_parsed_ir ir = NULL;
-	spvc_compiler compiler_glsl = NULL;
-	spvc_compiler_options options = NULL;
-	spvc_resources resources = NULL;
-	spvc_error_callback ecb;
-	char err[256];
-	const spvc_reflected_resource *list = NULL;
-	const char *result = NULL;
-	SpvId *spirv = NULL;
-	size_t count;
-	size_t i;
-	
-	//[0]: we create the context
-	SPVC_CHECKED_CALL(spvc_context_create(&context));
-	//[1]: we set an error callback
-	spvc_context_set_error_callback(context, spv_error_callback, NULL);
-	//[2]: we parse the spirv file
-	u32 code_size;
-	read_file(filename, &spirv, &code_size);
-	code_size /=sizeof(u32);//because we want word count, not overall size in bytes
-	SPVC_CHECKED_CALL(spvc_context_parse_spirv(context, spirv, code_size, &ir));
-	//[3]: we hand the ir to a compiler instance 
-	SPVC_CHECKED_CALL(spvc_context_create_compiler(context, SPVC_BACKEND_NONE, ir, SPVC_CAPTURE_MODE_COPY, &compiler_glsl));
-	//[4]: we do some basic reflection
-	SPVC_CHECKED_CALL(spvc_compiler_create_shader_resources(compiler_glsl, &resources));
-	SPVC_CHECKED_CALL(spvc_resources_get_resource_list_for_type(resources, SPVC_RESOURCE_TYPE_UNIFORM_BUFFER, &list, &count));
-	
-	SPVC_CHECKED_CALL(spvc_compiler_create_compiler_options(compiler_glsl, &options));
-	SPVC_CHECKED_CALL(spvc_compiler_install_compiler_options(compiler_glsl, options));
-	
-	SPVC_CHECKED_CALL(spvc_compiler_create_shader_resources(compiler_glsl, &resources));
-	char text[] = "---shader dump---";
-	printf(text);
-	printf("\n");
-	dump_resources(compiler_glsl, resources);
-	for (u32 i =0; i<array_count(text);++i)printf("-");
-	printf("\n");
-	spvc_context_destroy(context);
-}
-//---------------SPVC---------------
-
+//-------------------------
 
 //-----------------BUFFER-------------------
 typedef struct DataBuffer
@@ -461,6 +497,7 @@ internal VkPipeline build_pipeline(VkDevice device, PipelineBuilder p,VkRenderPa
 	return new_pipeline;
 }
 
+
 internal VkShaderModule create_shader_module(char *code, u32 size)
 {
 	VkShaderModuleCreateInfo create_info = {0};
@@ -472,14 +509,73 @@ internal VkShaderModule create_shader_module(char *code, u32 size)
 	return shader_module;
 }
 
-internal void shader_create(VkDevice device, Shader *shader, const char *filename, VkShaderStageFlagBits stage)
+internal void shader_reflect(u32 *shader_code, u32 code_size, ShaderMetaInfo *info)
 {
+	// Generate reflection data for a shader
+	SpvReflectShaderModule module;
+	SPV_CHECK(spvReflectCreateShaderModule(code_size, shader_code, &module));
+	
+    //input attributes 
+	u32 var_count = 0;
+	SPV_CHECK(spvReflectEnumerateInputVariables(&module, &var_count, NULL));
+	SpvReflectInterfaceVariable** input_vars =
+	  (SpvReflectInterfaceVariable**)malloc(var_count * sizeof(SpvReflectInterfaceVariable*));
+	SPV_CHECK(spvReflectEnumerateInputVariables(&module, &var_count, input_vars));
+    info->vertex_input_attribute_count = var_count;
+    for (u32 i = 0; i < var_count; ++i)
+    {
+        VertexInputAttribute *attr = &info->vertex_input_attributes[i];
+        attr->location = input_vars[i]->location;
+        attr->format = input_vars[i]->format;
+        attr->builtin = input_vars[i]->built_in;
+        attr->size = get_format_size(attr->format); //@THIS IS TEMPORARY (DELETE THIS)
+
+        sprintf(attr->name, input_vars[i]->name);
+        printf("vertex input variable %s is at location: %i\n", attr->name, attr->location);
+    }
+
+
+	
+	spvReflectDestroyShaderModule(&module);
+	info->input_variable_count = var_count;
+}
+
+//@BEWARE(inv): runtime shader compilation should generally be avoided as it is too slow to call the command line!
+//one other option would be to use glslang BUT its a big dependency and I don't really need it.
+#define SHADER_DST_DIR "shaders/"
+#define SHADER_SRC_DIR "../assets/shaders/"
+internal void shader_create_dynamic(VkDevice device, Shader *shader, const char *filename, VkShaderStageFlagBits stage)
+{
+    char command[256];
+    char new_file[256];
+    sprintf(new_file, "%s%s.spv", SHADER_DST_DIR, filename);
+    sprintf(command,"glslangvalidator -V %s%s -o %s", SHADER_SRC_DIR, filename, new_file);
+    system(command);
+    
 	u32 code_size;
 	u32 *shader_code = NULL;
-	read_file(filename, &shader_code, &code_size);
+	read_file(new_file, &shader_code, &code_size);
 	shader->module = create_shader_module(shader_code, code_size);
 	shader->uses_push_constants = FALSE;
-	//shader_reflect(shader_code, &shader->info);
+	shader_reflect(shader_code, code_size, &shader->info);
+	printf("Shader: %s has %i input variable(s)!\n", filename, shader->info.input_variable_count);
+	shader->stage = stage;
+	free(shader_code);
+    //remove(new_file);
+}  
+
+
+internal void shader_create(VkDevice device, Shader *shader, const char *filename, VkShaderStageFlagBits stage)
+{
+    char path[256];
+    sprintf(path, "%s%s.spv", SHADER_DST_DIR, filename);
+	u32 code_size;
+	u32 *shader_code = NULL;
+	if (read_file(path, &shader_code, &code_size) == -1){shader_create_dynamic(device, shader, filename, stage);return;};
+	shader->module = create_shader_module(shader_code, code_size);
+	shader->uses_push_constants = FALSE;
+	shader_reflect(shader_code, code_size, &shader->info);
+	printf("Shader: %s has %i input variable(s)!\n", filename, shader->info.input_variable_count);
 	shader->stage = stage;
 	free(shader_code);
 }  
@@ -499,8 +595,8 @@ internal void vl_base_pipelines_init(void)
 	VK_CHECK(vkCreatePipelineLayout(vl.device, &pipeline_layout_info, NULL, &vl.fullscreen_pipeline_layout));
 	
 
-	shader_create(vl.device, &vl.fullscreen_vert, "fullscreen_vert.spv", VK_SHADER_STAGE_VERTEX_BIT); 
-	shader_create(vl.device, &vl.fullscreen_frag, "fullscreen_frag.spv", VK_SHADER_STAGE_FRAGMENT_BIT);
+	shader_create(vl.device, &vl.fullscreen_vert, "fullscreen.vert", VK_SHADER_STAGE_VERTEX_BIT); 
+	shader_create(vl.device, &vl.fullscreen_frag, "fullscreen.frag", VK_SHADER_STAGE_FRAGMENT_BIT);
 	
 	PipelineBuilder pb = {0};
 	pb.shader_stages_count = 2;
@@ -524,23 +620,23 @@ internal void vl_base_pipelines_init(void)
 	
 	
 
-	shader_create(vl.device, &vl.base_vert, "vert.spv", VK_SHADER_STAGE_VERTEX_BIT); 
-	shader_create(vl.device, &vl.base_frag, "frag.spv", VK_SHADER_STAGE_FRAGMENT_BIT);
+	shader_create(vl.device, &vl.base_vert, "shader.vert", VK_SHADER_STAGE_VERTEX_BIT); 
+	shader_create(vl.device, &vl.base_frag, "shader.frag", VK_SHADER_STAGE_FRAGMENT_BIT);
 	
 	pb.shader_stages_count = 2;
 	pb.shader_stages[0] = pipe_shader_stage_create_info(vl.base_vert.stage, vl.base_vert.module);
 	pb.shader_stages[1] = pipe_shader_stage_create_info(vl.base_frag.stage, vl.base_frag.module);
 	
 	//---VERTEX INPUT---
-    VkVertexInputBindingDescription bind_desc = get_bind_desc_test_vert();
-    VkVertexInputAttributeDescription attr_desc[3];
-    get_attr_desc_test_vert(attr_desc);
+    VkVertexInputBindingDescription bind_desc = get_bind_desc(&vl.base_vert.info);
+    VkVertexInputAttributeDescription attr_desc[32];
+    u32 attribute_count = get_attr_desc(attr_desc, &vl.base_vert.info);
     
     VkPipelineVertexInputStateCreateInfo vertex_input_info = {0};
     vertex_input_info.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
     vertex_input_info.vertexBindingDescriptionCount = 1;//we have 1 vertex description 
     vertex_input_info.pVertexBindingDescriptions = &bind_desc;
-    vertex_input_info.vertexAttributeDescriptionCount = array_count(attr_desc); //with 2 different attributes
+    vertex_input_info.vertexAttributeDescriptionCount = attribute_count; //with 2 different attributes
     vertex_input_info.pVertexAttributeDescriptions = attr_desc;
 	
 	pb.vertex_input_info = vertex_input_info;
@@ -1929,7 +2025,7 @@ internal void calc_fps(void)
     if ( delta >= 1.0f){
         f32 fps = nb_frames / delta;
         char frames[256];
-        sprintf(frames, "FPS: %f", fps);
+        sprintf(frames, "|vulkan demo|  %f fps", fps);
 		window_set_window_title(&wnd, frames);
         nb_frames = 0;
         prev_time = current_time;
@@ -1984,7 +2080,6 @@ int main(void)
     
 	if(vulkan_init())printf("Vulkan OK\n");
 	
-	spvc_dump("fullscreen_vert.spv");
 	
 	main_loop();
 	
