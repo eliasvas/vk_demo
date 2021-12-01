@@ -14,6 +14,17 @@ Window wnd;
 
 #include "SPIRV/spirv_reflect.h"
 
+/*
+                        TODO:
+    1) vertex input reflection (array types remaining)
+    2) UBO/descriptor set reflection
+    2.5) pipeline specific UBO/desc set allocation and usage
+    3) multi framebuffer rendering abstraction (render pass?)
+    3.5) pipeline layout dynamic infer
+    4) command buffer management (@optional)
+
+*/
+
 internal s32 window_w = 800;
 internal s32 window_h = 600;
 
@@ -49,41 +60,67 @@ typedef struct Swapchain
 }Swapchain;
 
 typedef enum ShaderVarFormat{
-  SHADER_FORMAT_UNDEFINED           =   0, // = VK_FORMAT_UNDEFINED
-  SHADER_FORMAT_R32_UINT            =  98, // = VK_FORMAT_R32_UINT
-  SHADER_FORMAT_R32_SINT            =  99, // = VK_FORMAT_R32_SINT
-  SHADER_FORMAT_R32_SFLOAT          = 100, // = VK_FORMAT_R32_SFLOAT
-  SHADER_FORMAT_R32G32_UINT         = 101, // = VK_FORMAT_R32G32_UINT
-  SHADER_FORMAT_R32G32_SINT         = 102, // = VK_FORMAT_R32G32_SINT
-  SHADER_FORMAT_R32G32_SFLOAT       = 103, // = VK_FORMAT_R32G32_SFLOAT
-  SHADER_FORMAT_R32G32B32_UINT      = 104, // = VK_FORMAT_R32G32B32_UINT
-  SHADER_FORMAT_R32G32B32_SINT      = 105, // = VK_FORMAT_R32G32B32_SINT
-  SHADER_FORMAT_R32G32B32_SFLOAT    = 106, // = VK_FORMAT_R32G32B32_SFLOAT
-  SHADER_FORMAT_R32G32B32A32_UINT   = 107, // = VK_FORMAT_R32G32B32A32_UINT
-  SHADER_FORMAT_R32G32B32A32_SINT   = 108, // = VK_FORMAT_R32G32B32A32_SINT
-  SHADER_FORMAT_R32G32B32A32_SFLOAT = 109, // = VK_FORMAT_R32G32B32A32_SFLOAT
-  SHADER_FORMAT_R64_UINT            = 110, // = VK_FORMAT_R64_UINT
-  SHADER_FORMAT_R64_SINT            = 111, // = VK_FORMAT_R64_SINT
-  SHADER_FORMAT_R64_SFLOAT          = 112, // = VK_FORMAT_R64_SFLOAT
-  SHADER_FORMAT_R64G64_UINT         = 113, // = VK_FORMAT_R64G64_UINT
-  SHADER_FORMAT_R64G64_SINT         = 114, // = VK_FORMAT_R64G64_SINT
-  SHADER_FORMAT_R64G64_SFLOAT       = 115, // = VK_FORMAT_R64G64_SFLOAT
-  SHADER_FORMAT_R64G64B64_UINT      = 116, // = VK_FORMAT_R64G64B64_UINT
-  SHADER_FORMAT_R64G64B64_SINT      = 117, // = VK_FORMAT_R64G64B64_SINT
-  SHADER_FORMAT_R64G64B64_SFLOAT    = 118, // = VK_FORMAT_R64G64B64_SFLOAT
-  SHADER_FORMAT_R64G64B64A64_UINT   = 119, // = VK_FORMAT_R64G64B64A64_UINT
-  SHADER_FORMAT_R64G64B64A64_SINT   = 120, // = VK_FORMAT_R64G64B64A64_SINT
-  SHADER_FORMAT_R64G64B64A64_SFLOAT = 121, // = VK_FORMAT_R64G64B64A64_SFLOAT
+  SHADER_VAR_FORMAT_UNDEFINED           =   0, // = VK_FORMAT_UNDEFINED
+  SHADER_VAR_FORMAT_R32_UINT            =  98, // = VK_FORMAT_R32_UINT
+  SHADER_VAR_FORMAT_R32_SINT            =  99, // = VK_FORMAT_R32_SINT
+  SHADER_VAR_FORMAT_R32_SFLOAT          = 100, // = VK_FORMAT_R32_SFLOAT
+  SHADER_VAR_FORMAT_R32G32_UINT         = 101, // = VK_FORMAT_R32G32_UINT
+  SHADER_VAR_FORMAT_R32G32_SINT         = 102, // = VK_FORMAT_R32G32_SINT
+  SHADER_VAR_FORMAT_R32G32_SFLOAT       = 103, // = VK_FORMAT_R32G32_SFLOAT
+  SHADER_VAR_FORMAT_R32G32B32_UINT      = 104, // = VK_FORMAT_R32G32B32_UINT
+  SHADER_VAR_FORMAT_R32G32B32_SINT      = 105, // = VK_FORMAT_R32G32B32_SINT
+  SHADER_VAR_FORMAT_R32G32B32_SFLOAT    = 106, // = VK_FORMAT_R32G32B32_SFLOAT
+  SHADER_VAR_FORMAT_R32G32B32A32_UINT   = 107, // = VK_FORMAT_R32G32B32A32_UINT
+  SHADER_VAR_FORMAT_R32G32B32A32_SINT   = 108, // = VK_FORMAT_R32G32B32A32_SINT
+  SHADER_VAR_FORMAT_R32G32B32A32_SFLOAT = 109, // = VK_FORMAT_R32G32B32A32_SFLOAT
+  SHADER_VAR_FORMAT_R64_UINT            = 110, // = VK_FORMAT_R64_UINT
+  SHADER_VAR_FORMAT_R64_SINT            = 111, // = VK_FORMAT_R64_SINT
+  SHADER_VAR_FORMAT_R64_SFLOAT          = 112, // = VK_FORMAT_R64_SFLOAT
+  SHADER_VAR_FORMAT_R64G64_UINT         = 113, // = VK_FORMAT_R64G64_UINT
+  SHADER_VAR_FORMAT_R64G64_SINT         = 114, // = VK_FORMAT_R64G64_SINT
+  SHADER_VAR_FORMAT_R64G64_SFLOAT       = 115, // = VK_FORMAT_R64G64_SFLOAT
+  SHADER_VAR_FORMAT_R64G64B64_UINT      = 116, // = VK_FORMAT_R64G64B64_UINT
+  SHADER_VAR_FORMAT_R64G64B64_SINT      = 117, // = VK_FORMAT_R64G64B64_SINT
+  SHADER_VAR_FORMAT_R64G64B64_SFLOAT    = 118, // = VK_FORMAT_R64G64B64_SFLOAT
+  SHADER_VAR_FORMAT_R64G64B64A64_UINT   = 119, // = VK_FORMAT_R64G64B64A64_UINT
+  SHADER_VAR_FORMAT_R64G64B64A64_SINT   = 120, // = VK_FORMAT_R64G64B64A64_SINT
+  SHADER_VAR_FORMAT_R64G64B64A64_SFLOAT = 121, // = VK_FORMAT_R64G64B64A64_SFLOAT
 } ShaderVarFormat;
 
+typedef enum ShaderDescType{
+  SHADER_DESC_TYPE_SAMPLER                    =  0,        // = VK_DESCRIPTOR_TYPE_SAMPLER
+  SHADER_DESC_TYPE_COMBINED_IMAGE_SAMPLER     =  1,        // = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER
+  SHADER_DESC_TYPE_SAMPLED_IMAGE              =  2,        // = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE
+  SHADER_DESC_TYPE_STORAGE_IMAGE              =  3,        // = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE
+  SHADER_DESC_TYPE_UNIFORM_TEXEL_BUFFER       =  4,        // = VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER
+  SHADER_DESC_TYPE_STORAGE_TEXEL_BUFFER       =  5,        // = VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER
+  SHADER_DESC_TYPE_UNIFORM_BUFFER             =  6,        // = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER
+  SHADER_DESC_TYPE_STORAGE_BUFFER             =  7,        // = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER
+  SHADER_DESC_TYPE_UNIFORM_BUFFER_DYNAMIC     =  8,        // = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC
+  SHADER_DESC_TYPE_STORAGE_BUFFER_DYNAMIC     =  9,        // = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC
+  SHADER_DESC_TYPE_INPUT_ATTACHMENT           = 10,        // = VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT
+  SHADER_DESC_TYPE_ACCELERATION_STRUCTURE_KHR = 1000150000 // = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR
+} ShaderDescType;
+
+typedef struct ShaderDescriptorBinding
+{
+    char name[64];
+    u32 binding; // bind point of the descriptor (e.g layout(binding = 2) )
+    u32 set; // set this descriptor belongs to (e.g layout(set = 0))
+    ShaderDescType desc_type;
+}ShaderDescriptorBinding;
+
+//TODO: finish this or find another way to infer size of a shader variable
 internal u32 get_format_size(ShaderVarFormat format)
 {
     switch(format)
     {
-        case SHADER_FORMAT_R32G32B32_SFLOAT:
+        case SHADER_VAR_FORMAT_R32G32B32_SFLOAT:
             return 3 * sizeof(f32);
-        case SHADER_FORMAT_R32G32_SFLOAT:
+        case SHADER_VAR_FORMAT_R32G32_SFLOAT:
             return 2 * sizeof(f32);
+        case SHADER_VAR_FORMAT_R32_SFLOAT:
+            return sizeof(f32);
         default:
             return 0;
     }
@@ -94,20 +131,25 @@ typedef struct VertexInputAttribute
     u32 location;
     u8 name[64];
     b32 builtin;
+    u32 array_count;
     u32 size; //size of attribute in bytes
     ShaderVarFormat format;
 }VertexInputAttribute;
+
+
 #define MAX_RESOURCES_PER_SHADER 32
 typedef struct ShaderMetaInfo
 {
-	VkDescriptorType resource_types[MAX_RESOURCES_PER_SHADER];
-	u32 resource_names[MAX_RESOURCES_PER_SHADER];
-	u32 input_variable_count;
-
 
     VertexInputAttribute vertex_input_attributes[MAX_RESOURCES_PER_SHADER];
     u32 vertex_input_attribute_count;
 
+    ShaderDescriptorBinding descriptor_bindings[MAX_RESOURCES_PER_SHADER];
+    u32 descriptor_count;
+
+
+
+	u32 input_variable_count;
 }ShaderMetaInfo;
 
 internal u32 calc_vertex_input_total_size(ShaderMetaInfo *info)
@@ -325,15 +367,22 @@ internal VkPipelineShaderStageCreateInfo
 	return info;
 }
 
-internal VkPipelineVertexInputStateCreateInfo pipe_vertex_input_state_create_info(void)
+internal VkPipelineVertexInputStateCreateInfo 
+pipe_vertex_input_state_create_info(Shader *shader, VkVertexInputBindingDescription *bind_desc, VkVertexInputAttributeDescription *attr_desc)
 {
+
+
+    *bind_desc = get_bind_desc(&shader->info);
+    u32 attribute_count = get_attr_desc(attr_desc, &shader->info);
+ 
 	VkPipelineVertexInputStateCreateInfo info = {0};
 	info.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
 	info.pNext = NULL;
-	
-	//no vertex bindings or attributes
-	info.vertexBindingDescriptionCount = 0; //no vertex
-	info.vertexAttributeDescriptionCount = 0; //no attribute
+	info.vertexBindingDescriptionCount = 1;
+    info.pVertexBindingDescriptions = bind_desc;
+	info.vertexAttributeDescriptionCount = attribute_count;
+    info.pVertexAttributeDescriptions = attr_desc;
+
 	return info;
 }
 
@@ -401,15 +450,15 @@ internal VkPipelineColorBlendAttachmentState pipe_color_blend_attachment_state(v
 }
 
 //this is retty much empty
-internal VkPipelineLayoutCreateInfo pipe_layout_create_info(void)
+internal VkPipelineLayoutCreateInfo pipe_layout_create_info(VkDescriptorSetLayout *layouts, u32 layouts_count)
 {
 	VkPipelineLayoutCreateInfo info = {0};
 	info.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
 	info.pNext = NULL;
 	
 	info.flags = 0;
-	info.setLayoutCount = 0;
-	info.pSetLayouts = NULL;
+	info.setLayoutCount = layouts_count;
+	info.pSetLayouts = layouts;
 	info.pushConstantRangeCount = 0;
 	info.pPushConstantRanges = NULL;
 	return info;
@@ -509,6 +558,65 @@ internal VkShaderModule create_shader_module(char *code, u32 size)
 	return shader_module;
 }
 
+/*
+typedef struct ShaderMetaInfo
+{
+
+    VertexInputAttribute vertex_input_attributes[MAX_RESOURCES_PER_SHADER];
+    u32 vertex_input_attribute_count;
+
+    ShaderDescriptorBinding descriptor_bindings[MAX_RESOURCES_PER_SHADER];
+    u32 descriptor_count;
+
+
+
+	u32 input_variable_count;
+}ShaderMetaInfo;
+*/
+
+
+internal VkDescriptorSetLayout shader_create_descriptor_set_layout(Shader *vert, Shader *frag, u32 set_count)
+{
+    VkDescriptorSetLayout layout;
+
+    VkDescriptorSetLayoutBinding bindings[32];
+    u32 binding_count = 0;
+    for (u32 i = 0; i < vert->info.descriptor_count; ++i)
+    {
+        VkDescriptorSetLayoutBinding binding = {0};
+        binding.binding = vert->info.descriptor_bindings[i].binding;
+        binding.descriptorType = vert->info.descriptor_bindings[i].desc_type;
+        binding.descriptorCount = set_count; //N if we want an array of descriptors (dset?)
+        binding.stageFlags = VK_SHADER_STAGE_ALL_GRAPHICS;
+        binding.pImmutableSamplers = NULL;
+
+        //add the binding to the array
+        bindings[binding_count++] = binding;
+    }
+    for (u32 i = 0; i < frag->info.descriptor_count; ++i)
+    {
+        VkDescriptorSetLayoutBinding binding = {0};
+        binding.binding = frag->info.descriptor_bindings[i].binding;
+        binding.descriptorType = frag->info.descriptor_bindings[i].desc_type;
+        binding.descriptorCount = set_count; //N if we want an array of descriptors (dset?)
+        binding.stageFlags = VK_SHADER_STAGE_ALL_GRAPHICS;
+        binding.pImmutableSamplers = NULL;
+
+        //add the binding to the array
+        bindings[binding_count++] = binding;
+    }
+
+
+    VkDescriptorSetLayoutCreateInfo layout_info = {0};
+    layout_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+    layout_info.bindingCount = binding_count;
+    layout_info.pBindings = bindings;
+    
+    VK_CHECK(vkCreateDescriptorSetLayout(vl.device, &layout_info, NULL, layout));
+    return layout;
+}
+
+
 internal void shader_reflect(u32 *shader_code, u32 code_size, ShaderMetaInfo *info)
 {
 	// Generate reflection data for a shader
@@ -525,19 +633,49 @@ internal void shader_reflect(u32 *shader_code, u32 code_size, ShaderMetaInfo *in
     for (u32 i = 0; i < var_count; ++i)
     {
         VertexInputAttribute *attr = &info->vertex_input_attributes[i];
-        attr->location = input_vars[i]->location;
-        attr->format = input_vars[i]->format;
-        attr->builtin = input_vars[i]->built_in;
-        attr->size = get_format_size(attr->format); //@THIS IS TEMPORARY (DELETE THIS)
+        SpvReflectInterfaceVariable *curvar = input_vars[i];
+
+        attr->location = curvar->location;
+        attr->format = curvar->format;
+        attr->builtin = curvar->built_in;
+
+        if (curvar->array.dims_count > 0)attr->array_count = curvar->array.dims[0];
+        else attr->array_count = 1;
+
+        attr->size = get_format_size(attr->format) * attr->array_count; //@THIS IS TEMPORARY (DELETE THIS)
 
         sprintf(attr->name, input_vars[i]->name);
-        printf("vertex input variable %s is at location: %i\n", attr->name, attr->location);
+        //printf("vertex input variable %s is at location: %i[F%i], size=%i\n", attr->name, attr->location, attr->format, attr->size);
     }
+    //descriptor set (UBO)
 
+    u32 desc_set_count = 0;
+	SPV_CHECK(spvReflectEnumerateDescriptorSets(&module, &desc_set_count, NULL));
+    if (desc_set_count)
+    {
+        SpvReflectDescriptorSet** descriptor_sets=
+          (SpvReflectDescriptorSet**)malloc(desc_set_count * sizeof(SpvReflectDescriptorSet*));
+        SPV_CHECK(spvReflectEnumerateDescriptorSets(&module, &desc_set_count, descriptor_sets));
+        SpvReflectDescriptorBinding **bindings = descriptor_sets[0]->bindings;
+        info->descriptor_count = descriptor_sets[0]->binding_count;
+        for (u32 i = 0; i < info->descriptor_count; ++i)
+        {
+            SpvReflectDescriptorBinding *desc_info = bindings[i];
+            ShaderDescriptorBinding *desc_binding = &info->descriptor_bindings[i];
+
+
+            desc_binding->binding = desc_info->binding;
+            desc_binding->set = desc_info->set;
+            desc_binding->desc_type = desc_info->descriptor_type;
+            sprintf(desc_binding->name, desc_info->name);
+
+
+            printf("DESC: %s(set =%i, binding = %i)[%i]\n", desc_binding->name, desc_binding->set,desc_binding->binding, desc_binding->desc_type);
+        }
+    }
 
 	
 	spvReflectDestroyShaderModule(&module);
-	info->input_variable_count = var_count;
 }
 
 //@BEWARE(inv): runtime shader compilation should generally be avoided as it is too slow to call the command line!
@@ -557,7 +695,7 @@ internal void shader_create_dynamic(VkDevice device, Shader *shader, const char 
 	read_file(new_file, &shader_code, &code_size);
 	shader->module = create_shader_module(shader_code, code_size);
 	shader->uses_push_constants = FALSE;
-	shader_reflect(shader_code, code_size, &shader->info);
+    shader_reflect(shader_code, code_size, &shader->info);
 	printf("Shader: %s has %i input variable(s)!\n", filename, shader->info.input_variable_count);
 	shader->stage = stage;
 	free(shader_code);
@@ -574,7 +712,7 @@ internal void shader_create(VkDevice device, Shader *shader, const char *filenam
 	if (read_file(path, &shader_code, &code_size) == -1){shader_create_dynamic(device, shader, filename, stage);return;};
 	shader->module = create_shader_module(shader_code, code_size);
 	shader->uses_push_constants = FALSE;
-	shader_reflect(shader_code, code_size, &shader->info);
+    shader_reflect(shader_code, code_size, &shader->info);
 	printf("Shader: %s has %i input variable(s)!\n", filename, shader->info.input_variable_count);
 	shader->stage = stage;
 	free(shader_code);
@@ -589,63 +727,45 @@ internal void get_attr_desc_test_vert(VkVertexInputAttributeDescription *attr_de
 ///*
 internal void vl_base_pipelines_init(void)
 {
-	//build pipeline layout that controls the IO of the shader
-	VkPipelineLayoutCreateInfo pipeline_layout_info = pipe_layout_create_info();
+
+    VkVertexInputBindingDescription bind_desc;
+    VkVertexInputAttributeDescription attr_desc[32];
+	VkPipelineLayoutCreateInfo pipeline_layout_info = pipe_layout_create_info(NULL, 0);
 	
 	VK_CHECK(vkCreatePipelineLayout(vl.device, &pipeline_layout_info, NULL, &vl.fullscreen_pipeline_layout));
 	
+	PipelineBuilder pb = {0};
 
 	shader_create(vl.device, &vl.fullscreen_vert, "fullscreen.vert", VK_SHADER_STAGE_VERTEX_BIT); 
 	shader_create(vl.device, &vl.fullscreen_frag, "fullscreen.frag", VK_SHADER_STAGE_FRAGMENT_BIT);
-	
-	PipelineBuilder pb = {0};
 	pb.shader_stages_count = 2;
 	pb.shader_stages[0] = pipe_shader_stage_create_info(vl.fullscreen_vert.stage, vl.fullscreen_vert.module);
 	pb.shader_stages[1] = pipe_shader_stage_create_info(vl.fullscreen_frag.stage, vl.fullscreen_frag.module);
-	
-	pb.vertex_input_info = pipe_vertex_input_state_create_info();
+    pb.vertex_input_info = pipe_vertex_input_state_create_info(&vl.fullscreen_vert, &bind_desc, attr_desc);
 	pb.input_asm = pipe_input_assembly_create_info(VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST);
 	pb.rasterizer = pipe_rasterization_state_create_info(VK_POLYGON_MODE_FILL);
 	pb.multisampling = pipe_multisampling_state_create_info();
 	pb.color_blend_attachment = pipe_color_blend_attachment_state();
-	pb.pipeline_layout = vl.fullscreen_pipeline_layout; //hmmmmmmm TODO check
+
+    //VkDescriptorSetLayout layout = shader_create_descriptor_set_layout(&vl.fullscreen_vert, &vl.fullscreen_frag, 1);
+	pb.pipeline_layout = vl.fullscreen_pipeline_layout;
 	vl.fullscreen_pipeline = build_pipeline(vl.device, pb, vl.render_pass);
 	
 	
 	
 	
-	pipeline_layout_info = pipe_layout_create_info();
-	
-	VK_CHECK(vkCreatePipelineLayout(vl.device, &pipeline_layout_info, NULL, &vl.base_pipeline_layout));
-	
-	
-
 	shader_create(vl.device, &vl.base_vert, "shader.vert", VK_SHADER_STAGE_VERTEX_BIT); 
 	shader_create(vl.device, &vl.base_frag, "shader.frag", VK_SHADER_STAGE_FRAGMENT_BIT);
-	
 	pb.shader_stages_count = 2;
 	pb.shader_stages[0] = pipe_shader_stage_create_info(vl.base_vert.stage, vl.base_vert.module);
 	pb.shader_stages[1] = pipe_shader_stage_create_info(vl.base_frag.stage, vl.base_frag.module);
-	
-	//---VERTEX INPUT---
-    VkVertexInputBindingDescription bind_desc = get_bind_desc(&vl.base_vert.info);
-    VkVertexInputAttributeDescription attr_desc[32];
-    u32 attribute_count = get_attr_desc(attr_desc, &vl.base_vert.info);
-    
-    VkPipelineVertexInputStateCreateInfo vertex_input_info = {0};
-    vertex_input_info.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
-    vertex_input_info.vertexBindingDescriptionCount = 1;//we have 1 vertex description 
-    vertex_input_info.pVertexBindingDescriptions = &bind_desc;
-    vertex_input_info.vertexAttributeDescriptionCount = attribute_count; //with 2 different attributes
-    vertex_input_info.pVertexAttributeDescriptions = attr_desc;
-	
-	pb.vertex_input_info = vertex_input_info;
+    pb.vertex_input_info = pipe_vertex_input_state_create_info(&vl.base_vert, &bind_desc, attr_desc);
 	pb.input_asm = pipe_input_assembly_create_info(VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST);
 	pb.rasterizer = pipe_rasterization_state_create_info(VK_POLYGON_MODE_FILL);
 	pb.multisampling = pipe_multisampling_state_create_info();
 	pb.color_blend_attachment = pipe_color_blend_attachment_state();
 	
-	///---PIPELINE LAYOUT--- (for uniform and push values referenced by shaders)
+	//---PIPELINE LAYOUT--- (for uniform and push values referenced by shaders)
     pipeline_layout_info = (VkPipelineLayoutCreateInfo){0};
     pipeline_layout_info.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
     pipeline_layout_info.setLayoutCount = 1;
