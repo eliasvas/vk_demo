@@ -87,6 +87,41 @@ typedef enum ShaderVarFormat{
   SHADER_VAR_FORMAT_R64G64B64A64_SFLOAT = 121, // = VK_FORMAT_R64G64B64A64_SFLOAT
 } ShaderVarFormat;
 
+typedef enum ShaderReflectTypeFlagBits{
+  SHADER_REFLECT_TYPE_FLAG_UNDEFINED                       = 0x00000000,
+  SHADER_REFLECT_TYPE_FLAG_VOID                            = 0x00000001,
+  SHADER_REFLECT_TYPE_FLAG_BOOL                            = 0x00000002,
+  SHADER_REFLECT_TYPE_FLAG_INT                             = 0x00000004,
+  SHADER_REFLECT_TYPE_FLAG_FLOAT                           = 0x00000008,
+  SHADER_REFLECT_TYPE_FLAG_VECTOR                          = 0x00000100,
+  SHADER_REFLECT_TYPE_FLAG_MATRIX                          = 0x00000200,
+  SHADER_REFLECT_TYPE_FLAG_EXTERNAL_IMAGE                  = 0x00010000,
+  SHADER_REFLECT_TYPE_FLAG_EXTERNAL_SAMPLER                = 0x00020000,
+  SHADER_REFLECT_TYPE_FLAG_EXTERNAL_SAMPLED_IMAGE          = 0x00040000,
+  SHADER_REFLECT_TYPE_FLAG_EXTERNAL_BLOCK                  = 0x00080000,
+  SHADER_REFLECT_TYPE_FLAG_EXTERNAL_ACCELERATION_STRUCTURE = 0x00100000,
+  SHADER_REFLECT_TYPE_FLAG_EXTERNAL_MASK                   = 0x00FF0000,
+  SHADER_REFLECT_TYPE_FLAG_STRUCT                          = 0x10000000,
+  SHADER_REFLECT_TYPE_FLAG_ARRAY                           = 0x20000000,
+} ShaderReflectTypeFlagBits;
+
+typedef struct ShaderReflectNumTraits{
+  struct scalar {
+    u32 width;
+    u32 signedness;
+  } scalar;
+
+  struct vector {
+    u32 component_count;
+  } vector;
+
+  struct matrix {
+    u32 column_count;
+    u32 row_count;
+    u32 stride; // Measured in bytes
+  } matrix;
+} ShaderReflectNumTraits;
+
 typedef enum ShaderDescType{
   SHADER_DESC_TYPE_SAMPLER                    =  0,        // = VK_DESCRIPTOR_TYPE_SAMPLER
   SHADER_DESC_TYPE_COMBINED_IMAGE_SAMPLER     =  1,        // = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER
@@ -111,12 +146,28 @@ typedef enum RPrimitiveTopology{
     RPRIMITIVE_TOPOLOGY_TRIANGLE_FAN = 5, // =VK_PRIMITIVE_TOPOLOGY_TRIANGLE_FAN 
 } RPrimitiveTopology;
 
+typedef struct UniformVariable
+{
+    char name[64];
+    u32 size;
+    u32 padded_size;
+    u32 offset;
+    u32 type_flags;
+}UniformVariable;
+
 typedef struct ShaderDescriptorBinding
 {
     char name[64];
     u32 binding; // bind point of the descriptor (e.g layout(binding = 2) )
     u32 set; // set this descriptor belongs to (e.g layout(set = 0))
-    ShaderDescType desc_type;
+
+    UniformVariable members[32];
+    u32 member_count;
+
+    void *mem;
+    u32 mem_size;
+
+    ShaderDescType desc_type; //ubo/image sampler etc..
 }ShaderDescriptorBinding;
 
 //TODO: finish this or find another way to infer size of a shader variable
@@ -260,32 +311,6 @@ typedef struct VulkanLayer
 
 global VulkanLayer vl;
 
-
-//------SPIRV_REFLECT------
-
-int SpirvReflectExample(const void* spirv_code, size_t spirv_nbytes)
-{
-  // Generate reflection data for a shader
-  SpvReflectShaderModule module;
-  SPV_CHECK(spvReflectCreateShaderModule(spirv_nbytes, spirv_code, &module));
-
-  // Enumerate and extract shader's input variables
-  uint32_t var_count = 0;
-  SPV_CHECK(spvReflectEnumerateInputVariables(&module, &var_count, NULL));
-  
-  SpvReflectInterfaceVariable** input_vars =
-    (SpvReflectInterfaceVariable**)malloc(var_count * sizeof(SpvReflectInterfaceVariable*));
-  
-  SPV_CHECK(spvReflectEnumerateInputVariables(&module, &var_count, input_vars));
-
-  // Output variables, descriptor bindings, descriptor sets, and push constants
-  // can be enumerated and extracted using a similar mechanism.
-
-  // Destroy the reflection data when no longer required.
-  spvReflectDestroyShaderModule(&module);
-}
-
-//-------------------------
 
 //-----------------BUFFER-------------------
 typedef struct DataBuffer
@@ -666,6 +691,40 @@ internal void shader_reflect(u32 *shader_code, u32 code_size, ShaderMetaInfo *in
             desc_binding->desc_type = desc_info->descriptor_type;
             sprintf(desc_binding->name, desc_info->name);
 
+            SpvReflectTypeDescription *uniform_struct_desc = desc_info->type_description;
+            desc_binding->member_count = uniform_struct_desc->member_count;
+            for(u32 i = 0; i < desc_binding->member_count;++i)
+            {
+                //add a type descriptor for each uniform in the uniform buffer
+                SpvOp type = uniform_struct_desc->members[i].op;
+                char *name = uniform_struct_desc->members[i].struct_member_name;
+                sprintf(desc_binding->members[i].name, name);
+
+                u32 type_flags = uniform_struct_desc->members[i].type_flags;
+                desc_binding->members[i].type_flags = type_flags;
+                SpvReflectNumericTraits numeric = uniform_struct_desc->members[i].traits.numeric;
+                u32 component_count = numeric.vector.component_count;
+                //printf("VARIABLE %s.%s of type %i with %i components \n", desc_binding->name, name, type_flags, component_count);
+            }
+
+            SpvReflectBlockVariable uniform_struct = desc_info->block;
+            desc_binding->member_count = uniform_struct.member_count;
+            u32 size = uniform_struct.size; //size of data
+            u32 padded_size = uniform_struct.padded_size;
+            //assert(size == padded_size);
+            desc_binding->mem_size = size;
+            desc_binding->mem = malloc(size);
+            //printf("size of %s: %i, size of padded %s: %i\n", desc_binding->name, size, desc_binding->name, padded_size);
+            for(u32 i = 0; i < desc_binding->member_count;++i)
+            {
+                SpvReflectBlockVariable cur_var = uniform_struct.members[i];
+                char *name = cur_var.name;
+                desc_binding->members[i].size = cur_var.size;
+                desc_binding->members[i].padded_size = cur_var.padded_size;
+                desc_binding->members[i].offset = cur_var.offset;
+                u32 absolute_offset = cur_var.absolute_offset;
+            }
+
 
             printf("DESC: %s(set =%i, binding = %i)[%i]\n", desc_binding->name, desc_binding->set,desc_binding->binding, desc_binding->desc_type);
         }
@@ -745,7 +804,7 @@ internal void vl_base_pipelines_init(void)
 {
 
     pipeline_build_basic(&vl.fullscreen_pipe, "fullscreen.vert", "fullscreen.frag", RPRIMITIVE_TOPOLOGY_TRIANGLE_LIST);
-    pipeline_build_basic(&vl.base_pipe, "shader.vert", "shader.frag", RPRIMITIVE_TOPOLOGY_TRIANGLE_LIST);
+    pipeline_build_basic(&vl.base_pipe, "base.vert", "base.frag", RPRIMITIVE_TOPOLOGY_TRIANGLE_LIST);
 }
 
 
@@ -1308,7 +1367,7 @@ internal void create_descriptor_pool(void)
 {
     VkDescriptorPoolSize pool_size[2];
     pool_size[0].type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-    pool_size[0].descriptorCount = vl.swap.image_count;
+    pool_size[0].descriptorCount = vl.swap.image_count; //do we need to specify big descriptor count?
 	pool_size[1].type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
     pool_size[1].descriptorCount = vl.swap.image_count;
     
@@ -1317,6 +1376,7 @@ internal void create_descriptor_pool(void)
     pool_info.poolSizeCount = array_count(pool_size);
     pool_info.pPoolSizes = pool_size;
     pool_info.maxSets = vl.swap.image_count;
+    pool_info.flags = VK_DESCRIPTOR_POOL_CREATE_UPDATE_AFTER_BIND_BIT;
     
     VK_CHECK(vkCreateDescriptorPool(vl.device, &pool_info, NULL, &descriptor_pool));
 }
@@ -2002,6 +2062,20 @@ internal void update_uniform_buffer(u32 image_index)
 {
     UniformBufferObject ubo = {0};
     ubo.model = mat4_mul(mat4_translate(v3(0,0,-4)),mat4_rotate( 360.0f * sin(get_time()) ,v3(0,1,0)));
+    ubo.view = look_at(v3(0,0,0), v3(0,0,-1), v3(0,1,0));
+    ubo.proj = perspective_proj_vk(45.0f,window_w/(f32)window_h, 0.1, 10);
+
+	void *data = &ubo;
+	
+	VK_CHECK(buf_map(&uniform_buffers[image_index], uniform_buffers[image_index].size, 0));
+	memcpy(uniform_buffers[image_index].mapped, &ubo, sizeof(ubo));
+	buf_unmap(&uniform_buffers[image_index]);
+}
+
+internal void update_uniform_buffer2(u32 image_index)
+{
+    UniformBufferObject ubo = {0};
+    ubo.model = mat4_mul(mat4_translate(v3(0,0,-4)),mat4_rotate( -360.0f * sin(get_time()) ,v3(0,1,0)));
     ubo.view = look_at(v3(0,0,0), v3(0,0,-1), v3(0,1,0));
     ubo.proj = perspective_proj_vk(45.0f,window_w/(f32)window_h, 0.1, 10);
 
