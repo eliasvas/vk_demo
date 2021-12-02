@@ -102,6 +102,15 @@ typedef enum ShaderDescType{
   SHADER_DESC_TYPE_ACCELERATION_STRUCTURE_KHR = 1000150000 // = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR
 } ShaderDescType;
 
+typedef enum RPrimitiveTopology{
+    RPRIMITIVE_TOPOLOGY_POINT_LIST = 0, // =VK_PRIMITIVE_TOPOLOGY_POINT_LIST 
+    RPRIMITIVE_TOPOLOGY_LINE_LIST = 1, // =VK_PRIMITIVE_TOPOLOGY_LINE_LIST 
+    RPRIMITIVE_TOPOLOGY_LINE_STRIP = 2, // =VK_PRIMITIVE_TOPOLOGY_LINE_STRIP 
+    RPRIMITIVE_TOPOLOGY_TRIANGLE_LIST = 3, // =VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST
+    RPRIMITIVE_TOPOLOGY_TRIANGLE_STRIP = 4, // =VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP 
+    RPRIMITIVE_TOPOLOGY_TRIANGLE_FAN = 5, // =VK_PRIMITIVE_TOPOLOGY_TRIANGLE_FAN 
+} RPrimitiveTopology;
+
 typedef struct ShaderDescriptorBinding
 {
     char name[64];
@@ -197,7 +206,7 @@ internal u32 get_attr_desc(VkVertexInputAttributeDescription *attr_desc, ShaderM
 }
 
 
-typedef struct Shader
+typedef struct ShaderObject
 {
 	VkShaderModule module;
 	VkShaderStageFlagBits stage;
@@ -205,8 +214,18 @@ typedef struct Shader
 	ShaderMetaInfo info;
 	
 	b32 uses_push_constants;
-}Shader;
+}ShaderObject;
 
+
+typedef struct PipelineObject
+{
+    ShaderObject vertex_shader;
+    ShaderObject fragment_shader;
+    ShaderObject compute_shader;
+
+    VkPipeline pipeline;
+    VkPipelineLayout pipeline_layout;
+}PipelineObject;
 
 typedef struct VulkanLayer
 {
@@ -233,13 +252,13 @@ typedef struct VulkanLayer
 	VkRenderPass render_pass;
 	
 
-	Shader fullscreen_vert;
-	Shader fullscreen_frag;
+	ShaderObject fullscreen_vert;
+	ShaderObject fullscreen_frag;
 	VkPipeline fullscreen_pipeline;
 	VkPipelineLayout fullscreen_pipeline_layout;
 	
-	Shader base_vert;
-	Shader base_frag;
+	ShaderObject base_vert;
+	ShaderObject base_frag;
 	VkPipeline base_pipeline;
 	VkPipelineLayout base_pipeline_layout;
 }VulkanLayer;
@@ -368,7 +387,7 @@ internal VkPipelineShaderStageCreateInfo
 }
 
 internal VkPipelineVertexInputStateCreateInfo 
-pipe_vertex_input_state_create_info(Shader *shader, VkVertexInputBindingDescription *bind_desc, VkVertexInputAttributeDescription *attr_desc)
+pipe_vertex_input_state_create_info(ShaderObject *shader, VkVertexInputBindingDescription *bind_desc, VkVertexInputAttributeDescription *attr_desc)
 {
 
 
@@ -558,24 +577,8 @@ internal VkShaderModule create_shader_module(char *code, u32 size)
 	return shader_module;
 }
 
-/*
-typedef struct ShaderMetaInfo
-{
 
-    VertexInputAttribute vertex_input_attributes[MAX_RESOURCES_PER_SHADER];
-    u32 vertex_input_attribute_count;
-
-    ShaderDescriptorBinding descriptor_bindings[MAX_RESOURCES_PER_SHADER];
-    u32 descriptor_count;
-
-
-
-	u32 input_variable_count;
-}ShaderMetaInfo;
-*/
-
-
-internal VkDescriptorSetLayout shader_create_descriptor_set_layout(Shader *vert, Shader *frag, u32 set_count)
+internal VkDescriptorSetLayout shader_create_descriptor_set_layout(ShaderObject *vert, ShaderObject *frag, u32 set_count)
 {
     VkDescriptorSetLayout layout;
 
@@ -612,7 +615,7 @@ internal VkDescriptorSetLayout shader_create_descriptor_set_layout(Shader *vert,
     layout_info.bindingCount = binding_count;
     layout_info.pBindings = bindings;
     
-    VK_CHECK(vkCreateDescriptorSetLayout(vl.device, &layout_info, NULL, layout));
+    VK_CHECK(vkCreateDescriptorSetLayout(vl.device, &layout_info, NULL, &layout));
     return layout;
 }
 
@@ -682,7 +685,7 @@ internal void shader_reflect(u32 *shader_code, u32 code_size, ShaderMetaInfo *in
 //one other option would be to use glslang BUT its a big dependency and I don't really need it.
 #define SHADER_DST_DIR "shaders/"
 #define SHADER_SRC_DIR "../assets/shaders/"
-internal void shader_create_dynamic(VkDevice device, Shader *shader, const char *filename, VkShaderStageFlagBits stage)
+internal void shader_create_dynamic(VkDevice device, ShaderObject *shader, const char *filename, VkShaderStageFlagBits stage)
 {
     char command[256];
     char new_file[256];
@@ -703,7 +706,7 @@ internal void shader_create_dynamic(VkDevice device, Shader *shader, const char 
 }  
 
 
-internal void shader_create(VkDevice device, Shader *shader, const char *filename, VkShaderStageFlagBits stage)
+internal void shader_create(VkDevice device, ShaderObject *shader, const char *filename, VkShaderStageFlagBits stage)
 {
     char path[256];
     sprintf(path, "%s%s.spv", SHADER_DST_DIR, filename);
@@ -718,9 +721,6 @@ internal void shader_create(VkDevice device, Shader *shader, const char *filenam
 	free(shader_code);
 }  
 
-VkDescriptorSetLayout descriptor_set_layout;
-//-------------------------------------------------------------------------------------------
-
 internal VkShaderModule create_shader_module(char *code, u32 size);
 internal VkVertexInputBindingDescription get_bind_desc_test_vert(void);
 internal void get_attr_desc_test_vert(VkVertexInputAttributeDescription *attr_desc);
@@ -732,7 +732,6 @@ internal void vl_base_pipelines_init(void)
     VkVertexInputAttributeDescription attr_desc[32];
 	VkPipelineLayoutCreateInfo pipeline_layout_info = pipe_layout_create_info(NULL, 0);
 	
-	VK_CHECK(vkCreatePipelineLayout(vl.device, &pipeline_layout_info, NULL, &vl.fullscreen_pipeline_layout));
 	
 	PipelineBuilder pb = {0};
 
@@ -747,12 +746,15 @@ internal void vl_base_pipelines_init(void)
 	pb.multisampling = pipe_multisampling_state_create_info();
 	pb.color_blend_attachment = pipe_color_blend_attachment_state();
 
-    //VkDescriptorSetLayout layout = shader_create_descriptor_set_layout(&vl.fullscreen_vert, &vl.fullscreen_frag, 1);
-	pb.pipeline_layout = vl.fullscreen_pipeline_layout;
+    VkDescriptorSetLayout layout = shader_create_descriptor_set_layout(&vl.fullscreen_vert, &vl.fullscreen_frag, 1);
+    VkPipelineLayoutCreateInfo info = pipe_layout_create_info(&layout, 1);
+	VK_CHECK(vkCreatePipelineLayout(vl.device, &info, NULL, &pb.pipeline_layout));
+	VK_CHECK(vkCreatePipelineLayout(vl.device, &info, NULL, &vl.fullscreen_pipeline_layout));
 	vl.fullscreen_pipeline = build_pipeline(vl.device, pb, vl.render_pass);
 	
 	
 	
+    //pipeline_build_basic("shader.vert", "shader.frag", RPRIMITIVE_TOPOLOGY_TRIANGLE_LIST);
 	
 	shader_create(vl.device, &vl.base_vert, "shader.vert", VK_SHADER_STAGE_VERTEX_BIT); 
 	shader_create(vl.device, &vl.base_frag, "shader.frag", VK_SHADER_STAGE_FRAGMENT_BIT);
@@ -764,18 +766,12 @@ internal void vl_base_pipelines_init(void)
 	pb.rasterizer = pipe_rasterization_state_create_info(VK_POLYGON_MODE_FILL);
 	pb.multisampling = pipe_multisampling_state_create_info();
 	pb.color_blend_attachment = pipe_color_blend_attachment_state();
-	
-	//---PIPELINE LAYOUT--- (for uniform and push values referenced by shaders)
-    pipeline_layout_info = (VkPipelineLayoutCreateInfo){0};
-    pipeline_layout_info.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-    pipeline_layout_info.setLayoutCount = 1;
-    pipeline_layout_info.pSetLayouts = &descriptor_set_layout;
-    pipeline_layout_info.pushConstantRangeCount = 0;
-    pipeline_layout_info.pPushConstantRanges = NULL;
-    VK_CHECK(vkCreatePipelineLayout(vl.device, &pipeline_layout_info, NULL, &vl.base_pipeline_layout));
-	
-	
-	pb.pipeline_layout = vl.base_pipeline_layout;
+
+    layout = shader_create_descriptor_set_layout(&vl.base_vert, &vl.base_frag, 1);
+    info = pipe_layout_create_info(&layout, 1);
+	VK_CHECK(vkCreatePipelineLayout(vl.device, &info, NULL, &pb.pipeline_layout));
+	VK_CHECK(vkCreatePipelineLayout(vl.device, &info, NULL, &vl.base_pipeline_layout));
+
 	vl.base_pipeline = build_pipeline(vl.device, pb, vl.render_pass);
 }
 //*/
@@ -1289,11 +1285,11 @@ internal void vl_create_logical_device(void)
 
 
 
-internal void create_descriptor_sets(void)
+internal void create_descriptor_sets(VkDescriptorSetLayout layout)
 {
     VkDescriptorSetLayout *layouts = malloc(sizeof(VkDescriptorSetLayout)*vl.swap.image_count);
     for (u32 i = 0; i < vl.swap.image_count; ++i)
-        layouts[i] = descriptor_set_layout;
+        layouts[i] = layout;
     VkDescriptorSetAllocateInfo alloc_info = {0};
     alloc_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
     alloc_info.descriptorPool = descriptor_pool;
@@ -1335,6 +1331,7 @@ internal void create_descriptor_sets(void)
         vkUpdateDescriptorSets(vl.device, array_count(descriptor_writes), descriptor_writes, 0, NULL);
     }
 }
+
 internal void create_descriptor_pool(void)
 {
     VkDescriptorPoolSize pool_size[2];
@@ -1899,10 +1896,13 @@ internal void vl_recreate_swapchain(void)
     vl_create_render_pass();
     create_uniform_buffers();
     create_descriptor_pool();
-    create_descriptor_sets();
     
     
 	vl_base_pipelines_init();
+
+    VkDescriptorSetLayout layout = shader_create_descriptor_set_layout(&vl.base_vert, &vl.base_frag, 1);
+    create_descriptor_sets(layout);
+
 	vl_create_depth_resources();
     vl_create_framebuffers();
     vl_create_command_buffers();
@@ -1998,7 +1998,6 @@ internal void vulkan_layer_init(void)
 
 internal int vulkan_init(void) {
 	vulkan_layer_init();
-    create_descriptor_set_layout(1, 0, &descriptor_set_layout);
 	vl_base_pipelines_init();
 	
 	sample_texture = create_texture_image("../assets/test.png",VK_FORMAT_R8G8B8A8_SRGB);
@@ -2020,7 +2019,8 @@ internal int vulkan_init(void) {
 	
     create_uniform_buffers();
     create_descriptor_pool();
-    create_descriptor_sets();
+    VkDescriptorSetLayout layout = shader_create_descriptor_set_layout(&vl.base_vert, &vl.base_frag, 1);
+    create_descriptor_sets(layout);
     
     vl_create_command_buffers();
     create_sync_objects();
@@ -2167,7 +2167,6 @@ internal void cleanup(void)
 {
     vkDeviceWaitIdle(vl.device);  //so we dont close the window while commands are still being executed
     vl_cleanup_swapchain();
-    vkDestroyDescriptorSetLayout(vl.device, descriptor_set_layout, NULL);
     
 	buf_destroy(&index_buffer_real);
 	buf_destroy(&vertex_buffer_real);
