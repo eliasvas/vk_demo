@@ -219,8 +219,8 @@ typedef struct ShaderObject
 
 typedef struct PipelineObject
 {
-    ShaderObject vertex_shader;
-    ShaderObject fragment_shader;
+    ShaderObject vert_shader;
+    ShaderObject frag_shader;
     ShaderObject compute_shader;
 
     VkPipeline pipeline;
@@ -252,15 +252,9 @@ typedef struct VulkanLayer
 	VkRenderPass render_pass;
 	
 
-	ShaderObject fullscreen_vert;
-	ShaderObject fullscreen_frag;
-	VkPipeline fullscreen_pipeline;
-	VkPipelineLayout fullscreen_pipeline_layout;
-	
-	ShaderObject base_vert;
-	ShaderObject base_frag;
-	VkPipeline base_pipeline;
-	VkPipelineLayout base_pipeline_layout;
+    PipelineObject fullscreen_pipe;
+
+    PipelineObject base_pipe;
 }VulkanLayer;
 
 
@@ -721,60 +715,38 @@ internal void shader_create(VkDevice device, ShaderObject *shader, const char *f
 	free(shader_code);
 }  
 
-internal VkShaderModule create_shader_module(char *code, u32 size);
-internal VkVertexInputBindingDescription get_bind_desc_test_vert(void);
-internal void get_attr_desc_test_vert(VkVertexInputAttributeDescription *attr_desc);
-///*
-internal void vl_base_pipelines_init(void)
+internal void pipeline_build_basic(PipelineObject *p,const char *vert, const char *frag, RPrimitiveTopology topology)
 {
 
     VkVertexInputBindingDescription bind_desc;
     VkVertexInputAttributeDescription attr_desc[32];
-	VkPipelineLayoutCreateInfo pipeline_layout_info = pipe_layout_create_info(NULL, 0);
 	
-	
-	PipelineBuilder pb = {0};
 
-	shader_create(vl.device, &vl.fullscreen_vert, "fullscreen.vert", VK_SHADER_STAGE_VERTEX_BIT); 
-	shader_create(vl.device, &vl.fullscreen_frag, "fullscreen.frag", VK_SHADER_STAGE_FRAGMENT_BIT);
+    PipelineBuilder pb = {0};
+	shader_create(vl.device, &p->vert_shader, vert, VK_SHADER_STAGE_VERTEX_BIT); 
+	shader_create(vl.device, &p->frag_shader, frag, VK_SHADER_STAGE_FRAGMENT_BIT);
 	pb.shader_stages_count = 2;
-	pb.shader_stages[0] = pipe_shader_stage_create_info(vl.fullscreen_vert.stage, vl.fullscreen_vert.module);
-	pb.shader_stages[1] = pipe_shader_stage_create_info(vl.fullscreen_frag.stage, vl.fullscreen_frag.module);
-    pb.vertex_input_info = pipe_vertex_input_state_create_info(&vl.fullscreen_vert, &bind_desc, attr_desc);
-	pb.input_asm = pipe_input_assembly_create_info(VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST);
+	pb.shader_stages[0] = pipe_shader_stage_create_info(p->vert_shader.stage, p->vert_shader.module);
+	pb.shader_stages[1] = pipe_shader_stage_create_info(p->frag_shader.stage, p->frag_shader.module);
+    pb.vertex_input_info = pipe_vertex_input_state_create_info(&p->vert_shader, &bind_desc, attr_desc);
+	pb.input_asm = pipe_input_assembly_create_info(topology);
 	pb.rasterizer = pipe_rasterization_state_create_info(VK_POLYGON_MODE_FILL);
 	pb.multisampling = pipe_multisampling_state_create_info();
 	pb.color_blend_attachment = pipe_color_blend_attachment_state();
 
-    VkDescriptorSetLayout layout = shader_create_descriptor_set_layout(&vl.fullscreen_vert, &vl.fullscreen_frag, 1);
+    VkDescriptorSetLayout layout = shader_create_descriptor_set_layout(&p->vert_shader, &p->frag_shader, 1);
     VkPipelineLayoutCreateInfo info = pipe_layout_create_info(&layout, 1);
 	VK_CHECK(vkCreatePipelineLayout(vl.device, &info, NULL, &pb.pipeline_layout));
-	VK_CHECK(vkCreatePipelineLayout(vl.device, &info, NULL, &vl.fullscreen_pipeline_layout));
-	vl.fullscreen_pipeline = build_pipeline(vl.device, pb, vl.render_pass);
-	
-	
-	
-    //pipeline_build_basic("shader.vert", "shader.frag", RPRIMITIVE_TOPOLOGY_TRIANGLE_LIST);
-	
-	shader_create(vl.device, &vl.base_vert, "shader.vert", VK_SHADER_STAGE_VERTEX_BIT); 
-	shader_create(vl.device, &vl.base_frag, "shader.frag", VK_SHADER_STAGE_FRAGMENT_BIT);
-	pb.shader_stages_count = 2;
-	pb.shader_stages[0] = pipe_shader_stage_create_info(vl.base_vert.stage, vl.base_vert.module);
-	pb.shader_stages[1] = pipe_shader_stage_create_info(vl.base_frag.stage, vl.base_frag.module);
-    pb.vertex_input_info = pipe_vertex_input_state_create_info(&vl.base_vert, &bind_desc, attr_desc);
-	pb.input_asm = pipe_input_assembly_create_info(VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST);
-	pb.rasterizer = pipe_rasterization_state_create_info(VK_POLYGON_MODE_FILL);
-	pb.multisampling = pipe_multisampling_state_create_info();
-	pb.color_blend_attachment = pipe_color_blend_attachment_state();
-
-    layout = shader_create_descriptor_set_layout(&vl.base_vert, &vl.base_frag, 1);
-    info = pipe_layout_create_info(&layout, 1);
-	VK_CHECK(vkCreatePipelineLayout(vl.device, &info, NULL, &pb.pipeline_layout));
-	VK_CHECK(vkCreatePipelineLayout(vl.device, &info, NULL, &vl.base_pipeline_layout));
-
-	vl.base_pipeline = build_pipeline(vl.device, pb, vl.render_pass);
+	VK_CHECK(vkCreatePipelineLayout(vl.device, &info, NULL, &p->pipeline_layout));
+	p->pipeline = build_pipeline(vl.device, pb, vl.render_pass);
 }
-//*/
+
+internal void vl_base_pipelines_init(void)
+{
+
+    pipeline_build_basic(&vl.fullscreen_pipe, "fullscreen.vert", "fullscreen.frag", RPRIMITIVE_TOPOLOGY_TRIANGLE_LIST);
+    pipeline_build_basic(&vl.base_pipe, "shader.vert", "shader.frag", RPRIMITIVE_TOPOLOGY_TRIANGLE_LIST);
+}
 
 
 
@@ -1516,7 +1488,7 @@ internal void render_cube(VkCommandBuffer command_buf, u32 image_index)
     vkCmdBeginRenderPass(command_buf, &renderpass_info, VK_SUBPASS_CONTENTS_INLINE);
 	*/	
         
-	vkCmdBindPipeline(command_buf, VK_PIPELINE_BIND_POINT_GRAPHICS, vl.base_pipeline);
+	vkCmdBindPipeline(command_buf, VK_PIPELINE_BIND_POINT_GRAPHICS, vl.base_pipe.pipeline);
 		
     VkBuffer vertex_buffers[] = {vertex_buffer_real.buffer};
     VkDeviceSize offsets[] = {0};
@@ -1524,7 +1496,7 @@ internal void render_cube(VkCommandBuffer command_buf, u32 image_index)
     vkCmdBindIndexBuffer(command_buf, index_buffer_real.buffer, 0, VK_INDEX_TYPE_UINT32);
         
     vkCmdBindDescriptorSets(vl.command_buffers[image_index], VK_PIPELINE_BIND_POINT_GRAPHICS, 
-                                vl.base_pipeline_layout, 0, 1, &descriptor_sets[image_index], 0, NULL);
+                                vl.base_pipe.pipeline_layout, 0, 1, &descriptor_sets[image_index], 0, NULL);
     vkCmdDrawIndexed(command_buf, array_count(cube_indices), 1, 0, 0, 0);
 	
     
@@ -1534,7 +1506,7 @@ internal void render_cube(VkCommandBuffer command_buf, u32 image_index)
 
 internal void render_fullscreen(VkCommandBuffer command_buf, u32 image_index)
 {    
-	vkCmdBindPipeline(command_buf, VK_PIPELINE_BIND_POINT_GRAPHICS, vl.fullscreen_pipeline);
+	vkCmdBindPipeline(command_buf, VK_PIPELINE_BIND_POINT_GRAPHICS, vl.fullscreen_pipe.pipeline);
 	
     vkCmdDraw(command_buf, 4, 1, 0, 0);
 }
@@ -1866,14 +1838,14 @@ internal void vl_cleanup_swapchain(void)
     vkFreeMemory(vl.device, vl.depth_image_memory, NULL);
     for (u32 i = 0; i < vl.swap.image_count; ++i)
         vkDestroyFramebuffer(vl.device, vl.swap.framebuffers[i], NULL);
-	vkDestroyPipeline(vl.device, vl.fullscreen_pipeline, NULL);
+	vkDestroyPipeline(vl.device, vl.fullscreen_pipe.pipeline, NULL);
     vkDestroyRenderPass(vl.device, vl.render_pass, NULL);
     for (u32 i = 0; i < vl.swap.image_count; ++i)
         vkDestroyImageView(vl.device, vl.swap.image_views[i], NULL);
     vkDestroySwapchainKHR(vl.device, vl.swap.swapchain, NULL);
     //these will be recreated at pipeline creation for next swapchain
-    vkDestroyShaderModule(vl.device, vl.base_vert.module, NULL);
-    vkDestroyShaderModule(vl.device, vl.base_frag.module, NULL);
+    //vkDestroyShaderModule(vl.device, vl.base_vert.module, NULL);
+    //vkDestroyShaderModule(vl.device, vl.base_frag.module, NULL);
     for (u32 i = 0; i < vl.swap.image_count; ++i)
     {
         buf_destroy(&uniform_buffers[i]);
@@ -1900,7 +1872,7 @@ internal void vl_recreate_swapchain(void)
     
 	vl_base_pipelines_init();
 
-    VkDescriptorSetLayout layout = shader_create_descriptor_set_layout(&vl.base_vert, &vl.base_frag, 1);
+    VkDescriptorSetLayout layout = shader_create_descriptor_set_layout(&vl.base_pipe.vert_shader, &vl.base_pipe.frag_shader, 1);
     create_descriptor_sets(layout);
 
 	vl_create_depth_resources();
@@ -2019,7 +1991,7 @@ internal int vulkan_init(void) {
 	
     create_uniform_buffers();
     create_descriptor_pool();
-    VkDescriptorSetLayout layout = shader_create_descriptor_set_layout(&vl.base_vert, &vl.base_frag, 1);
+    VkDescriptorSetLayout layout = shader_create_descriptor_set_layout(&vl.base_pipe.vert_shader, &vl.base_pipe.frag_shader, 1);
     create_descriptor_sets(layout);
     
     vl_create_command_buffers();
