@@ -230,7 +230,7 @@ internal u32 get_attr_desc(VkVertexInputAttributeDescription *attr_desc, ShaderM
             if (location == i)
             {
                 attr_desc[location].binding = 0;
-                attr_desc[location].location = location; 
+                attr_desc[location].location = location;
                 attr_desc[location].format = info->vertex_input_attributes[i].format;
                 attr_desc[location].offset = global_offset;
                 global_offset+= info->vertex_input_attributes[i].size;
@@ -593,7 +593,7 @@ internal VkShaderModule create_shader_module(char *code, u32 size)
 
 internal VkDescriptorSetLayout shader_create_descriptor_set_layout(ShaderObject *vert, ShaderObject *frag, u32 set_count)
 {
-    VkDescriptorSetLayout layout;
+    VkDescriptorSetLayout layout = {0};
 
     VkDescriptorSetLayoutBinding bindings[32];
     u32 binding_count = 0;
@@ -834,8 +834,6 @@ internal void pipeline_build_basic(PipelineObject *p,const char *vert, const cha
     p->uniform_buffers = pipe_create_uniform_buffers(&p->vert_shader.info);
     pipe_create_descriptor_pool(&p->descriptor_pool, &p->vert_shader, &p->frag_shader);
     p->descriptor_sets = pipe_create_descriptor_sets(layout, &p->vert_shader,&p->frag_shader, p->descriptor_pool, p->uniform_buffers);
-    
-
 }
 
 internal void vl_base_pipelines_init(void)
@@ -848,8 +846,7 @@ internal void vl_base_pipelines_init(void)
 
 
 
-VkDescriptorPool descriptor_pool;
-VkDescriptorSet *descriptor_sets;
+
 
 
 const int MAX_FRAMES_IN_FLIGHT = 2;
@@ -865,7 +862,6 @@ VkFence *images_in_flight;
 
 DataBuffer vertex_buffer_real;
 DataBuffer index_buffer_real;
-DataBuffer *uniform_buffers;
 
 
 typedef struct Texture {
@@ -1368,9 +1364,9 @@ internal VkDescriptorSet *pipe_create_descriptor_sets(VkDescriptorSetLayout layo
     VkDescriptorSet *desc_sets = malloc(sizeof(VkDescriptorSet) * vl.swap.image_count);
     VK_CHECK(vkAllocateDescriptorSets(vl.device, &alloc_info, desc_sets));
     
-    for (size_t i = 0; i < vl.swap.image_count; i++) {
+    for (size_t j = 0; j < vl.swap.image_count; ++j) {
         VkDescriptorBufferInfo buffer_info = {0};
-        buffer_info.buffer = uni_buffers[i].buffer;
+        buffer_info.buffer = uni_buffers[j].buffer;
         buffer_info.offset = 0;
         buffer_info.range = vert->info.descriptor_bindings[0].mem_size; //@check
 		
@@ -1385,7 +1381,7 @@ internal VkDescriptorSet *pipe_create_descriptor_sets(VkDescriptorSetLayout layo
         for (u32 i = 0; i < vert->info.descriptor_count; ++i)
         {
             descriptor_writes[dw_count].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-            descriptor_writes[dw_count].dstSet = desc_sets[i];
+            descriptor_writes[dw_count].dstSet = desc_sets[j];
             //printf("Vertex binding: %i\n", vert->info.descriptor_bindings[i].binding);
             descriptor_writes[dw_count].dstBinding = vert->info.descriptor_bindings[i].binding;
             descriptor_writes[dw_count].dstArrayElement = 0; //u sure?????????????? @BUG
@@ -1401,7 +1397,7 @@ internal VkDescriptorSet *pipe_create_descriptor_sets(VkDescriptorSetLayout layo
         for (u32 i = 0; i < frag->info.descriptor_count; ++i)
         {
             descriptor_writes[dw_count].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-            descriptor_writes[dw_count].dstSet = desc_sets[i];
+            descriptor_writes[dw_count].dstSet = desc_sets[j];
             //printf("Fragment binding: %i\n", frag->info.descriptor_bindings[i].binding);
             descriptor_writes[dw_count].dstBinding = frag->info.descriptor_bindings[i].binding;
             descriptor_writes[dw_count].dstArrayElement = 0; //u sure?????????????? @BUG
@@ -1415,61 +1411,13 @@ internal VkDescriptorSet *pipe_create_descriptor_sets(VkDescriptorSetLayout layo
             ++dw_count;
         }
         
-        //printf("update %i with dw_count %i!\n", i, dw_count);
+        printf("update %i with dw_count %i!\n", j, dw_count);
         vkUpdateDescriptorSets(vl.device, dw_count, descriptor_writes, 0, NULL);
     }
     return desc_sets;
 }
 
 
-/*
-internal void create_descriptor_sets(VkDescriptorSetLayout layout)
-{
-    VkDescriptorSetLayout *layouts = malloc(sizeof(VkDescriptorSetLayout)*vl.swap.image_count);
-    for (u32 i = 0; i < vl.swap.image_count; ++i)
-        layouts[i] = layout;
-    VkDescriptorSetAllocateInfo alloc_info = {0};
-    alloc_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
-    alloc_info.descriptorPool = descriptor_pool;
-    alloc_info.descriptorSetCount = vl.swap.image_count;
-    alloc_info.pSetLayouts = layouts;
-    
-    descriptor_sets = malloc(sizeof(VkDescriptorSet) * vl.swap.image_count);
-    VK_CHECK(vkAllocateDescriptorSets(vl.device, &alloc_info, descriptor_sets));
-    
-    for (size_t i = 0; i < vl.swap.image_count; i++) {
-        VkDescriptorBufferInfo buffer_info = {0};
-        buffer_info.buffer = uniform_buffers[i].buffer;
-        buffer_info.offset = 0;
-        buffer_info.range = sizeof(UniformBufferObject);
-		
-		VkDescriptorImageInfo image_info = {0};
-		image_info.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-		image_info.imageView = sample_texture.view;
-		image_info.sampler = sample_texture.sampler;
-        
-        VkWriteDescriptorSet descriptor_writes[2] = {0};
-        
-		descriptor_writes[0].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-        descriptor_writes[0].dstSet = descriptor_sets[i];
-        descriptor_writes[0].dstBinding = 0;
-        descriptor_writes[0].dstArrayElement = 0;
-        descriptor_writes[0].descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-        descriptor_writes[0].descriptorCount = 1;
-        descriptor_writes[0].pBufferInfo = &buffer_info;
-		
-		descriptor_writes[1].sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-        descriptor_writes[1].dstSet = descriptor_sets[i];
-        descriptor_writes[1].dstBinding = 1;
-        descriptor_writes[1].dstArrayElement = 0;
-        descriptor_writes[1].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-        descriptor_writes[1].descriptorCount = 1;
-        descriptor_writes[1].pImageInfo = &image_info;
-        
-        vkUpdateDescriptorSets(vl.device, array_count(descriptor_writes), descriptor_writes, 0, NULL);
-    }
-}
-*/
 
 internal void pipe_create_descriptor_pool(VkDescriptorPool *descriptor_pool,ShaderObject *vert, ShaderObject *frag)
 {
@@ -1500,67 +1448,7 @@ internal void pipe_create_descriptor_pool(VkDescriptorPool *descriptor_pool,Shad
     VK_CHECK(vkCreateDescriptorPool(vl.device, &pool_info, NULL, descriptor_pool));
 }
 
-
-internal void create_descriptor_pool(ShaderObject *vert, ShaderObject *frag)
-{
-    VkDescriptorPoolSize pool_size[32];
-    u32 pool_count = 0;
-
-    for (u32 i = 0; i < vert->info.descriptor_count; ++i)
-    {
-        pool_size[pool_count].type = vert->info.descriptor_bindings[i].desc_type;
-        pool_size[pool_count].descriptorCount = vl.swap.image_count; //do we need to specify big descriptor count?
-        ++pool_count;
-    }
-
-    for (u32 i = 0; i < frag->info.descriptor_count; ++i)
-    {
-        pool_size[pool_count].type = frag->info.descriptor_bindings[i].desc_type;
-        pool_size[pool_count].descriptorCount = vl.swap.image_count; //do we need to specify big descriptor count?
-        ++pool_count;
-    }
-    
-    VkDescriptorPoolCreateInfo pool_info = {0};
-    pool_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
-    pool_info.poolSizeCount = pool_count;
-    pool_info.pPoolSizes = pool_size;
-    pool_info.maxSets = vl.swap.image_count;
-    //pool_info.flags = VK_DESCRIPTOR_POOL_CREATE_UPDATE_AFTER_BIND_BIT;
-    
-    VK_CHECK(vkCreateDescriptorPool(vl.device, &pool_info, NULL, &descriptor_pool));
-}
-
-
-internal void create_descriptor_set_layout(u32 buf_count, u32 binding, VkDescriptorSetLayout *layout)
-{
-    VkDescriptorSetLayoutBinding ubo_layout_binding = {0};
-    ubo_layout_binding.binding = binding;
-    ubo_layout_binding.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER;
-    ubo_layout_binding.descriptorCount = buf_count; //N if we want an array of descriptors (dset?)
-    ubo_layout_binding.stageFlags = VK_SHADER_STAGE_ALL_GRAPHICS;
-    ubo_layout_binding.pImmutableSamplers = NULL;
-	
-	VkDescriptorSetLayoutBinding sampler_layout_binding = {0};
-	sampler_layout_binding.binding = 1;
-	sampler_layout_binding.descriptorCount = 1;
-	sampler_layout_binding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-	sampler_layout_binding.pImmutableSamplers = NULL;
-	sampler_layout_binding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
-	
-	
-	VkDescriptorSetLayoutBinding bindings[2] = {ubo_layout_binding, sampler_layout_binding};
-    
-    VkDescriptorSetLayoutCreateInfo layout_info = {0};
-    layout_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-    layout_info.bindingCount = array_count(bindings);
-    layout_info.pBindings = bindings;
-    
-    VK_CHECK(vkCreateDescriptorSetLayout(vl.device, &layout_info, NULL, layout));
-    
-}
-
 internal VkFormat find_depth_format(void);
-
 internal void vl_create_render_pass(void)
 {
     VkAttachmentDescription color_attachment = {0};
@@ -1693,8 +1581,9 @@ internal void render_cube(VkCommandBuffer command_buf, u32 image_index)
 	//before binding the descriptor set, we update the contents of the UBO associated with that descriptor set
 	shader_copy_to_ubo(&vl.base_pipe.vert_shader.info, vl.base_pipe.uniform_buffers, image_index);
 	
+	//if (image_index != 0)return;
     vkCmdBindDescriptorSets(vl.command_buffers[image_index], VK_PIPELINE_BIND_POINT_GRAPHICS, 
-                                vl.base_pipe.pipeline_layout, 0, 1, &vl.base_pipe.descriptor_sets[0], 0, NULL);
+                                vl.base_pipe.pipeline_layout, 0, 1, &vl.base_pipe.descriptor_sets[image_index], 0, NULL);
 
     vkCmdDrawIndexed(command_buf, array_count(cube_indices), 1, 0, 0, 0);
 	
@@ -1998,7 +1887,7 @@ internal DataBuffer *pipe_create_uniform_buffers(ShaderMetaInfo *info)
     return uni_buffers;
 }
 
-
+/*
 internal void create_uniform_buffers(void)
 {
     VkDeviceSize buf_size = sizeof(UniformBufferObject);
@@ -2010,7 +1899,7 @@ internal void create_uniform_buffers(void)
                       VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,&uniform_buffers[i], buf_size, NULL);
     }
 }
-
+*/
 
 
 internal void create_sync_objects(void)
@@ -2058,10 +1947,10 @@ internal void vl_cleanup_swapchain(void)
     //these will be recreated at pipeline creation for next swapchain
     //vkDestroyShaderModule(vl.device, vl.base_vert.module, NULL);
     //vkDestroyShaderModule(vl.device, vl.base_frag.module, NULL);
-    for (u32 i = 0; i < vl.swap.image_count; ++i)
-    {
-        buf_destroy(&uniform_buffers[i]);
-    }
+    //for (u32 i = 0; i < vl.swap.image_count; ++i)
+    //{
+    //    buf_destroy(&uniform_buffers[i]);
+    //}
 }
 
 internal void vl_recreate_swapchain(void)
@@ -2077,15 +1966,10 @@ internal void vl_recreate_swapchain(void)
     vl_create_swapchain();
     vl_create_swapchain_image_views();
     vl_create_render_pass();
-    create_uniform_buffers();
-    create_descriptor_pool(&vl.base_pipe.vert_shader, &vl.base_pipe.frag_shader);
     
     
 	vl_base_pipelines_init();
-
-    //VkDescriptorSetLayout layout = shader_create_descriptor_set_layout(&vl.base_pipe.vert_shader, &vl.base_pipe.frag_shader, 1);
-    //create_descriptor_sets(layout);
-
+	
 	vl_create_depth_resources();
     vl_create_framebuffers();
     vl_create_command_buffers();
@@ -2200,10 +2084,7 @@ internal int vulkan_init(void) {
 	&index_buffer_real, sizeof(cube_indices[0]) * array_count(cube_indices), cube_indices);
 	
 	
-    create_uniform_buffers();
-    create_descriptor_pool(&vl.base_pipe.vert_shader, &vl.base_pipe.frag_shader);
-    //VkDescriptorSetLayout layout = shader_create_descriptor_set_layout(&vl.base_pipe.vert_shader, &vl.base_pipe.frag_shader, 1);
-    //create_descriptor_sets(layout);
+
     
     vl_create_command_buffers();
     create_sync_objects();
