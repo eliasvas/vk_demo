@@ -14,17 +14,6 @@ Window wnd;
 
 #include "SPIRV/spirv_reflect.h"
 
-/*
-                        TODO:
-    1) vertex input reflection (array types remaining)
-    2) UBO/descriptor set reflection
-    2.5) pipeline specific UBO/desc set allocation and usage
-    3) multi framebuffer rendering abstraction (render pass?)
-    3.5) pipeline layout dynamic infer
-    4) command buffer management (@optional)
-
-*/
-
 internal s32 window_w = 800;
 internal s32 window_h = 600;
 
@@ -655,7 +644,7 @@ internal void shader_set(ShaderMetaInfo *info, const char *name, void *src)
             u32 size = info->descriptor_bindings[0].members[i].size;
             void * ubo_mem = info->descriptor_bindings[0].mem;
             //memcpy(ubo_mem + offset, src, size);
-            memcpy(ubo_mem, src, size);
+            memcpy((char*)ubo_mem + offset, src, size);
             break;
         }
     }
@@ -1482,49 +1471,6 @@ internal void create_descriptor_sets(VkDescriptorSetLayout layout)
 }
 */
 
-/*
-internal VkDescriptorSetLayout shader_create_descriptor_set_layout(ShaderObject *vert, ShaderObject *frag, u32 set_count)
-{
-    VkDescriptorSetLayout layout;
-
-    VkDescriptorSetLayoutBinding bindings[32];
-    u32 binding_count = 0;
-    for (u32 i = 0; i < vert->info.descriptor_count; ++i)
-    {
-        VkDescriptorSetLayoutBinding binding = {0};
-        binding.binding = vert->info.descriptor_bindings[i].binding;
-        binding.descriptorType = vert->info.descriptor_bindings[i].desc_type;
-        binding.descriptorCount = set_count; //N if we want an array of descriptors (dset?)
-        binding.stageFlags = VK_SHADER_STAGE_ALL_GRAPHICS;
-        binding.pImmutableSamplers = NULL;
-
-        //add the binding to the array
-        bindings[binding_count++] = binding;
-    }
-    for (u32 i = 0; i < frag->info.descriptor_count; ++i)
-    {
-        VkDescriptorSetLayoutBinding binding = {0};
-        binding.binding = frag->info.descriptor_bindings[i].binding;
-        binding.descriptorType = frag->info.descriptor_bindings[i].desc_type;
-        binding.descriptorCount = set_count; //N if we want an array of descriptors (dset?)
-        binding.stageFlags = VK_SHADER_STAGE_ALL_GRAPHICS;
-        binding.pImmutableSamplers = NULL;
-
-        //add the binding to the array
-        bindings[binding_count++] = binding;
-    }
-
-
-    VkDescriptorSetLayoutCreateInfo layout_info = {0};
-    layout_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-    layout_info.bindingCount = binding_count;
-    layout_info.pBindings = bindings;
-    
-    VK_CHECK(vkCreateDescriptorSetLayout(vl.device, &layout_info, NULL, &layout));
-    return layout;
-}
-*/
-
 internal void pipe_create_descriptor_pool(VkDescriptorPool *descriptor_pool,ShaderObject *vert, ShaderObject *frag)
 {
     VkDescriptorPoolSize pool_size[32];
@@ -1744,7 +1690,9 @@ internal void render_cube(VkCommandBuffer command_buf, u32 image_index)
                                 vl.base_pipe.pipeline_layout, 0, 1, &vl.base_pipe.descriptor_sets[image_index], 0, NULL);
                                 */
 
-
+	//before binding the descriptor set, we update the contents of the UBO associated with that descriptor set
+	shader_copy_to_ubo(&vl.base_pipe.vert_shader.info, vl.base_pipe.uniform_buffers, image_index);
+	
     vkCmdBindDescriptorSets(vl.command_buffers[image_index], VK_PIPELINE_BIND_POINT_GRAPHICS, 
                                 vl.base_pipe.pipeline_layout, 0, 1, &vl.base_pipe.descriptor_sets[0], 0, NULL);
 
@@ -2262,35 +2210,6 @@ internal int vulkan_init(void) {
 	return 1;
 }
 
-internal void pipe_update_uniform_buffer(DataBuffer *uni_buffers, u32 image_index)
-{
-    UniformBufferObject ubo = {0};
-    ubo.model = mat4_mul(mat4_translate(v3(0,0,-4)),mat4_rotate( 360.0f * sin(get_time()) ,v3(0,0,1)));
-    ubo.view = look_at(v3(0,0,0), v3(0,0,-1), v3(0,1,0));
-    ubo.proj = perspective_proj_vk(45.0f,window_w/(f32)window_h, 0.1, 10);
-
-	void *data = &ubo;
-	
-	VK_CHECK(buf_map(&uni_buffers[image_index], uni_buffers[image_index].size, 0));
-	memcpy(uni_buffers[image_index].mapped, &ubo, sizeof(ubo));
-	buf_unmap(&uni_buffers[image_index]);
-}
-
-
-internal void update_uniform_buffer(u32 image_index)
-{
-    UniformBufferObject ubo = {0};
-    ubo.model = mat4_mul(mat4_translate(v3(0,0,-4)),mat4_rotate( 360.0f * sin(get_time()) ,v3(0,1,0)));
-    ubo.view = look_at(v3(0,0,0), v3(0,0,-1), v3(0,1,0));
-    ubo.proj = perspective_proj_vk(45.0f,window_w/(f32)window_h, 0.1, 10);
-
-	void *data = &ubo;
-	
-	VK_CHECK(buf_map(&uniform_buffers[image_index], uniform_buffers[image_index].size, 0));
-	memcpy(uniform_buffers[image_index].mapped, &ubo, sizeof(ubo));
-	buf_unmap(&uniform_buffers[image_index]);
-}
-
 internal void draw_frame(void)
 {
 	
@@ -2304,18 +2223,17 @@ internal void draw_frame(void)
     
     // check if the image is already used (in flight) froma previous frame, and if so wait
     if (images_in_flight[image_index]!=VK_NULL_HANDLE)vkWaitForFences(vl.device, 1, &images_in_flight[image_index], VK_TRUE, UINT64_MAX);
-    update_uniform_buffer(image_index);
-    pipe_update_uniform_buffer(vl.base_pipe.uniform_buffers, image_index);
 
-    /*
-    //TEST TEST TEST
-    mat4 model = mat4_mul(mat4_translate(v3(0,0,-4)),mat4_rotate( 360.0f * sin(get_time()) ,v3(0,0,1)));
+
+
+    mat4 model = mat4_mul(mat4_translate(v3(0,0,-4)),mat4_rotate( 360.0f * sin(get_time()) ,v3(0,1,1)));
     shader_set(&vl.base_pipe.vert_shader.info, "model", model.elements);
     mat4 view = look_at(v3(0,0,0), v3(0,0,-1), v3(0,1,0));
     shader_set(&vl.base_pipe.vert_shader.info, "view", view.elements);
     mat4 proj = perspective_proj_vk(45.0f,window_w/(f32)window_h, 0.1, 10);
     shader_set(&vl.base_pipe.vert_shader.info, "proj", proj.elements);
-    */
+	
+	
 
 
 
