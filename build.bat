@@ -18,9 +18,9 @@ set precompiled_shaders = 1
 if not exist build mkdir build
 
 pushd build
-if not exist spv.lib cl /EHsc  /LD ../ext/SPIRV/*.c
-if not exist spv.lib lib -out:spv.lib *.obj 
-cl %compile_flags% %build_options% /MT /Tc ..\src\vk_base.c -I/../src/ext/SPIRV/*.h /link %link_flags% spv.lib /out:%application_name%
+REM if not exist spv.lib cl /EHsc  /LD ../ext/SPIRV/*.c
+REM if not exist spv.lib lib -out:spv.lib *.obj 
+cl %compile_flags% %build_options% /MT /Tc ..\ext\SPIRV\spirv_reflect.c /Tc ..\src\vk_base.c -I/../src/ext/SPIRV/*.h /link %link_flags% /out:%application_name%
 popd
 
 if not exist build\shaders CALL precompile_shaders
