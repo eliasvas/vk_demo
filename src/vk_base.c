@@ -838,6 +838,8 @@ VkFence *images_in_flight;
 DataBuffer vertex_buffer_real;
 DataBuffer index_buffer_real;
 
+DataBuffer vertex_buffer_def;
+DataBuffer index_buffer_def;
 
 typedef struct Texture {
 		VkSampler sampler;
@@ -1923,6 +1925,8 @@ internal void vl_base_pipelines_init(void)
 
     pipeline_build_basic(&vl.fullscreen_pipe, "fullscreen.vert", "fullscreen.frag", RPRIMITIVE_TOPOLOGY_TRIANGLE_LIST);
     pipeline_build_basic(&vl.base_pipe, "base.vert", "base.frag", RPRIMITIVE_TOPOLOGY_TRIANGLE_LIST);
+	
+	//pipeline_build_basic(&vl.def_pipe, "def.vert", "def.frag", RPRIMITIVE_TOPOLOGY_TRIANGLE_LIST);
 }
 
 internal void render_cube_immediate(VkCommandBuffer command_buf, u32 image_index, PipelineObject *p, mat4 model)
