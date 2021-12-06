@@ -280,7 +280,7 @@ typedef struct PipelineObject
     VkPipelineLayout pipeline_layout;
 
     // do we really need the descriptor pool? (maybe have them in a cache??)
-    VkDescriptorPool descriptor_pool;
+    VkDescriptorPool descriptor_pool; //pools need to be reallocated with every swapchain recreation! @TODO
     VkDescriptorSet *descriptor_sets;
     DataBuffer *uniform_buffers;
 }PipelineObject;
@@ -597,7 +597,7 @@ internal VkDescriptorSetLayout shader_create_descriptor_set_layout(ShaderObject 
         binding.binding = vert->info.descriptor_bindings[i].binding;
         binding.descriptorType = vert->info.descriptor_bindings[i].desc_type;
         binding.descriptorCount = set_count; //N if we want an array of descriptors (dset?)
-        binding.stageFlags = VK_SHADER_STAGE_ALL_GRAPHICS;
+        binding.stageFlags = VK_SHADER_STAGE_ALL_GRAPHICS;//VK_SHADER_STAGE_VERTEX_BIT;
         binding.pImmutableSamplers = NULL;
 
         //add the binding to the array
@@ -609,7 +609,7 @@ internal VkDescriptorSetLayout shader_create_descriptor_set_layout(ShaderObject 
         binding.binding = frag->info.descriptor_bindings[i].binding;
         binding.descriptorType = frag->info.descriptor_bindings[i].desc_type;
         binding.descriptorCount = set_count; //N if we want an array of descriptors (dset?)
-        binding.stageFlags = VK_SHADER_STAGE_ALL_GRAPHICS;
+        binding.stageFlags = VK_SHADER_STAGE_ALL_GRAPHICS;//VK_SHADER_STAGE_FRAGMENT_BIT;
         binding.pImmutableSamplers = NULL;
 
         //add the binding to the array
@@ -645,6 +645,24 @@ internal void shader_set(ShaderMetaInfo *info, const char *name, void *src)
     }
 } 
 
+internal void shader_set_immediate(ShaderMetaInfo *info, const char *name, void *src, void *ubo_mem)
+{
+
+    u32 member_count = info->descriptor_bindings[0].member_count;
+    for(u32 i = 0; i < member_count;++i)
+    {
+        if (strcmp(name, info->descriptor_bindings[0].members[i].name) == 0)
+        {
+            u32 offset = info->descriptor_bindings[0].members[i].offset;
+            u32 size = info->descriptor_bindings[0].members[i].size;
+            //memcpy(ubo_mem + offset, src, size);
+            memcpy((char*)ubo_mem + offset, src, size);
+            break;
+        }
+    }
+} 
+
+
 internal void shader_copy_to_ubo(ShaderMetaInfo *info, DataBuffer *uniform_buffers, u32 image_index)
 {
 	void *data = info->descriptor_bindings[0].mem;
@@ -653,6 +671,16 @@ internal void shader_copy_to_ubo(ShaderMetaInfo *info, DataBuffer *uniform_buffe
 	memcpy(uniform_buffers[image_index].mapped, data,info->descriptor_bindings[0].mem_size);
 	buf_unmap(&uniform_buffers[image_index]);
 }
+
+internal void shader_copy_to_immediate(ShaderMetaInfo *info, DataBuffer *uniform_buffers, u32 image_index)
+{
+	void *data = info->descriptor_bindings[0].mem;
+	
+	VK_CHECK(buf_map(&uniform_buffers[image_index], uniform_buffers[image_index].size, 0));
+	memcpy(uniform_buffers[image_index].mapped, data,info->descriptor_bindings[0].mem_size);
+	buf_unmap(&uniform_buffers[image_index]);
+}
+
 
 
 internal void shader_reflect(u32 *shader_code, u32 code_size, ShaderMetaInfo *info)
@@ -744,6 +772,7 @@ internal void shader_reflect(u32 *shader_code, u32 code_size, ShaderMetaInfo *in
 
             //printf("DESC: %s(set =%i, binding = %i)[%i]\n", desc_binding->name, desc_binding->set,desc_binding->binding, desc_binding->desc_type);
         }
+        free(input_vars);
     }
 
 	
@@ -857,7 +886,7 @@ internal vec3 cube_positions[]  = {
     {0.5f, 0.5f, 0.5f},  {0.5f,-0.5f, 0.5f},   {0.5f,-0.5f,-0.5f},  {0.5f, 0.5f,-0.5f},   // v0,v3,v4,v5 (right)
     {0.5f, 0.5f, 0.5f},  {0.5f, 0.5f,-0.5f},   {-0.5f, 0.5f,-0.5f}, {-0.5f, 0.5f, 0.5f},   // v0,v5,v6,v1 (top)
     {-0.5f, 0.5f, 0.5f}, {-0.5f, 0.5f,-0.5f},  {-0.5f,-0.5f,-0.5f}, {-0.5f,-0.5f, 0.5f},   // v1,v6,v7,v2 (left)
-    {-0.5f,-0.5f,-0.5f}, {.05f,-0.5f,-0.5f},   {0.5f,-0.5f, 0.5f},  {-0.5f,-0.5f, 0.5f},   // v7,v4,v3,v2 (bottom)
+    {-0.5f,-0.5f,-0.5f}, {0.5f,-0.5f,-0.5f},   {0.5f,-0.5f, 0.5f},  {-0.5f,-0.5f, 0.5f},   // v7,v4,v3,v2 (bottom)
     {0.5f,-0.5f,-0.5f},  {-0.5f,-0.5f,-0.5f},  {-0.5f, 0.5f,-0.5f}, {0.5f, 0.5f,-0.5f},    // v4,v7,v6,v5 (back)
 };
 
@@ -1128,7 +1157,7 @@ internal void vl_pick_physical_device(void) {
         vl.physical_device = devices[i];
         break;
     }
-    
+    free(devices);
 }
 
 internal VkSurfaceFormatKHR choose_swap_surface_format(SwapChainSupportDetails details)
@@ -1884,6 +1913,7 @@ internal void pipeline_cleanup(PipelineObject *pipe)
 	for (u32 i = 0; i < vl.swap.image_count; ++i)
 		buf_destroy(&pipe->uniform_buffers[i]);
     //vkDestroyRenderPass(device, renderPass, NULL);
+    //descriptor sets are destroyed along with the descriptor_pool
 	vkDestroyDescriptorPool(vl.device, pipe->descriptor_pool, NULL);
 	//vkDestroyDescriptorSetLayout(device, pipe->descriptor_set_layout, NULL);
 }
@@ -1894,6 +1924,63 @@ internal void vl_base_pipelines_init(void)
     pipeline_build_basic(&vl.fullscreen_pipe, "fullscreen.vert", "fullscreen.frag", RPRIMITIVE_TOPOLOGY_TRIANGLE_LIST);
     pipeline_build_basic(&vl.base_pipe, "base.vert", "base.frag", RPRIMITIVE_TOPOLOGY_TRIANGLE_LIST);
 }
+
+internal void render_cube_immediate(VkCommandBuffer command_buf, u32 image_index, PipelineObject *p, mat4 model)
+{
+
+
+    VkDescriptorPool descriptor_pool; //pools need to be reallocated with every swapchain recreation! @TODO
+    VkDescriptorSet *descriptor_sets;
+    DataBuffer *uniform_buffers;
+
+    VkDescriptorSetLayout layout = shader_create_descriptor_set_layout(&p->vert_shader, &p->frag_shader, 1);
+    uniform_buffers = create_uniform_buffers(&p->vert_shader.info);
+    create_descriptor_pool(&descriptor_pool, &p->vert_shader, &p->frag_shader);
+    descriptor_sets = create_descriptor_sets(layout, &p->vert_shader,&p->frag_shader, descriptor_pool, uniform_buffers);
+	vkDestroyDescriptorSetLayout(vl.device, layout, NULL);
+
+
+
+
+
+
+	vkCmdBindPipeline(command_buf, VK_PIPELINE_BIND_POINT_GRAPHICS, p->pipeline);
+		
+    VkBuffer vertex_buffers[] = {vertex_buffer_real.buffer};
+    VkDeviceSize offsets[] = {0};
+    vkCmdBindVertexBuffers(command_buf, 0, 1, vertex_buffers, offsets);
+    vkCmdBindIndexBuffer(command_buf, index_buffer_real.buffer, 0, VK_INDEX_TYPE_UINT32);
+        
+ 
+
+    void *data = malloc(p->vert_shader.info.descriptor_bindings[0].mem_size);
+
+    shader_set_immediate(&p->vert_shader.info, "model", model.elements, data);
+    mat4 view = look_at(v3(0,0,0), v3(0,0,-1), v3(0,1,0));
+    shader_set_immediate(&p->vert_shader.info, "view", view.elements, data);
+    mat4 proj = perspective_proj_vk(45.0f,window_w/(f32)window_h, 0.1, 10);
+    shader_set_immediate(&p->vert_shader.info, "proj", proj.elements, data);
+	
+	
+    //copy uniform data to UBO
+	VK_CHECK(buf_map(&uniform_buffers[image_index], uniform_buffers[image_index].size, 0));
+	memcpy(uniform_buffers[image_index].mapped, data,p->vert_shader.info.descriptor_bindings[0].mem_size);
+	buf_unmap(&uniform_buffers[image_index]);
+
+
+    vkCmdBindDescriptorSets(vl.command_buffers[image_index], VK_PIPELINE_BIND_POINT_GRAPHICS, 
+                                p->pipeline_layout, 0, 1, &descriptor_sets[image_index], 0, NULL);
+
+    vkCmdDrawIndexed(command_buf, array_count(cube_indices), 1, 0, 0, 0);
+	
+    
+	//vkDestroyDescriptorPool(vl.device, descriptor_pool, NULL);
+    //for (u32 i = 0; i < vl.swap.image_count; ++i)
+		//buf_destroy(&uniform_buffers[i]);
+}
+
+
+
 
 internal void create_sync_objects(void)
 {
@@ -2093,7 +2180,7 @@ internal void draw_frame(void)
 
 
 
-    mat4 model = mat4_mul(mat4_translate(v3(0,0,-4)),mat4_rotate( 360.0f * sin(get_time()) ,v3(0,1,1)));
+    mat4 model = mat4_mul(mat4_translate(v3(0,0,-4)),mat4_rotate( 360.0f * sin(get_time()) ,v3(1,0,0)));
     shader_set(&vl.base_pipe.vert_shader.info, "model", model.elements);
     mat4 view = look_at(v3(0,0,0), v3(0,0,-1), v3(0,1,0));
     shader_set(&vl.base_pipe.vert_shader.info, "view", view.elements);
@@ -2132,6 +2219,11 @@ internal void draw_frame(void)
 	//we render the scene onto the command buffer
 	
 	render_cube(vl.command_buffers[image_index], image_index);
+
+    mat4 m = mat4_mul(mat4_translate(v3(1.2,0,-4)),mat4_rotate( 360.0f * sin(get_time()) ,v3(0.2,0.4,0.7)));
+    render_cube_immediate(vl.command_buffers[image_index], image_index, &vl.base_pipe, m);
+    m = mat4_mul(mat4_translate(v3(-1.2,0,-4)),mat4_rotate( 360.0f * sin(get_time()) ,v3(-0.2,-0.4,-0.7)));
+    render_cube_immediate(vl.command_buffers[image_index], image_index, &vl.base_pipe, m);
 	render_fullscreen(vl.command_buffers[image_index], image_index);
 	
 	
