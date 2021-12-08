@@ -996,6 +996,8 @@ INLINE mat4 perspective_proj_vk(f32 fov, f32 aspect, f32 n, f32 f)
     res.elements[3][2] = (2.f * n * f) / (n - f);
     res.elements[3][3] = 0.0f;
 
+    res.elements[1][1] *= -1;
+
     return res;
 }
 

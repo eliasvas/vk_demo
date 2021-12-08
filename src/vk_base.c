@@ -280,7 +280,7 @@ typedef struct PipelineObject
     VkPipelineLayout pipeline_layout;
 
     // do we really need the descriptor pool? (maybe have them in a cache??)
-    VkDescriptorPool descriptor_pool; //pools need to be reallocated with every swapchain recreation! @TODO
+    VkDescriptorPool descriptor_pools[16]; //pools need to be reallocated with every swapchain recreation! @TODO
     VkDescriptorSet *descriptor_sets;
     DataBuffer *uniform_buffers;
 }PipelineObject;
@@ -607,6 +607,7 @@ internal VkDescriptorSetLayout shader_create_descriptor_set_layout(ShaderObject 
     {
         VkDescriptorSetLayoutBinding binding = {0};
         binding.binding = frag->info.descriptor_bindings[i].binding;
+        if (frag->info.descriptor_bindings[i].binding == 0)continue; //@NOTE: this is to ignore default UBO description in fragment shader parsing
         binding.descriptorType = frag->info.descriptor_bindings[i].desc_type;
         binding.descriptorCount = set_count; //N if we want an array of descriptors (dset?)
         binding.stageFlags = VK_SHADER_STAGE_ALL_GRAPHICS;//VK_SHADER_STAGE_FRAGMENT_BIT;
@@ -838,8 +839,6 @@ VkFence *images_in_flight;
 DataBuffer vertex_buffer_real;
 DataBuffer index_buffer_real;
 
-DataBuffer vertex_buffer_def;
-DataBuffer index_buffer_def;
 
 typedef struct Texture {
 		VkSampler sampler;
@@ -1376,6 +1375,8 @@ internal VkDescriptorSet *create_descriptor_sets(VkDescriptorSetLayout layout, S
         for (u32 i = 0; i < frag->info.descriptor_count; ++i)
         {
 			VkWriteDescriptorSet desc_write = {0};
+  if (frag->info.descriptor_bindings[i].binding == 0)continue; //@NOTE: this is to ignore default UBO description in fragment shader parsing
+       
 			
             desc_write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
             desc_write.dstSet = desc_sets[j];
@@ -1410,14 +1411,16 @@ internal void create_descriptor_pool(VkDescriptorPool *descriptor_pool,ShaderObj
     {
 		
         ps.type = vert->info.descriptor_bindings[i].desc_type;
-        ps.descriptorCount = vl.swap.image_count; //do we need to specify big descriptor count?
+        ps.descriptorCount = vl.swap.image_count * 100; //do we need to specify big descriptor count?
 		buf_push(pool_size, ps);
     }
 
     for (u32 i = 0; i < frag->info.descriptor_count; ++i)
-    {
+    {  
+        if (frag->info.descriptor_bindings[i].binding == 0)continue; //@NOTE: this is to ignore default UBO description in fragment shader parsing
+       
         ps.type = frag->info.descriptor_bindings[i].desc_type;
-        ps.descriptorCount = vl.swap.image_count; //do we need to specify big descriptor count?
+        ps.descriptorCount = vl.swap.image_count * 100; //do we need to specify big descriptor count?
         buf_push(pool_size, ps);
     }
     
@@ -1425,8 +1428,8 @@ internal void create_descriptor_pool(VkDescriptorPool *descriptor_pool,ShaderObj
     pool_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
     pool_info.poolSizeCount = buf_len(pool_size);
     pool_info.pPoolSizes = pool_size;
-    pool_info.maxSets = vl.swap.image_count;
-    //pool_info.flags = VK_DESCRIPTOR_POOL_CREATE_UPDATE_AFTER_BIND_BIT;
+    pool_info.maxSets = vl.swap.image_count * 100;
+    pool_info.flags = VK_DESCRIPTOR_POOL_CREATE_UPDATE_AFTER_BIND_BIT;
     
     VK_CHECK(vkCreateDescriptorPool(vl.device, &pool_info, NULL, descriptor_pool));
 	buf_free(pool_size);
@@ -1899,9 +1902,10 @@ internal void pipeline_build_basic(PipelineObject *p,const char *vert, const cha
 
 
     //now make a descriptor pool and allocate the descriptor sets we need
-    p->uniform_buffers = create_uniform_buffers(&p->vert_shader.info);
-    create_descriptor_pool(&p->descriptor_pool, &p->vert_shader, &p->frag_shader);
-    p->descriptor_sets = create_descriptor_sets(layout, &p->vert_shader,&p->frag_shader, p->descriptor_pool, p->uniform_buffers);
+    //p->uniform_buffers = create_uniform_buffers(&p->vert_shader.info);
+    for (u32 i = 0;i < vl.swap.image_count; ++i)
+        create_descriptor_pool(&p->descriptor_pools[i], &p->vert_shader, &p->frag_shader);
+    //p->descriptor_sets = create_descriptor_sets(layout, &p->vert_shader,&p->frag_shader, p->descriptor_pool, p->uniform_buffers);
 	
 	//do we really have to deallocate the descriptor set after we use it??? @CHECK
 	vkDestroyDescriptorSetLayout(vl.device, layout, NULL);
@@ -1916,7 +1920,8 @@ internal void pipeline_cleanup(PipelineObject *pipe)
 		buf_destroy(&pipe->uniform_buffers[i]);
     //vkDestroyRenderPass(device, renderPass, NULL);
     //descriptor sets are destroyed along with the descriptor_pool
-	vkDestroyDescriptorPool(vl.device, pipe->descriptor_pool, NULL);
+    for (u32 i = 0; i < vl.swap.image_count; ++i)
+        vkDestroyDescriptorPool(vl.device, pipe->descriptor_pools[i], NULL);
 	//vkDestroyDescriptorSetLayout(device, pipe->descriptor_set_layout, NULL);
 }
 
@@ -1925,22 +1930,20 @@ internal void vl_base_pipelines_init(void)
 
     pipeline_build_basic(&vl.fullscreen_pipe, "fullscreen.vert", "fullscreen.frag", RPRIMITIVE_TOPOLOGY_TRIANGLE_LIST);
     pipeline_build_basic(&vl.base_pipe, "base.vert", "base.frag", RPRIMITIVE_TOPOLOGY_TRIANGLE_LIST);
-	
-	//pipeline_build_basic(&vl.def_pipe, "def.vert", "def.frag", RPRIMITIVE_TOPOLOGY_TRIANGLE_LIST);
 }
 
 internal void render_cube_immediate(VkCommandBuffer command_buf, u32 image_index, PipelineObject *p, mat4 model)
 {
 
 
-    VkDescriptorPool descriptor_pool; //pools need to be reallocated with every swapchain recreation! @TODO
+    //VkDescriptorPool descriptor_pool = p->descriptor_pool; //pools need to be reallocated with every swapchain recreation! @TODO
     VkDescriptorSet *descriptor_sets;
     DataBuffer *uniform_buffers;
 
     VkDescriptorSetLayout layout = shader_create_descriptor_set_layout(&p->vert_shader, &p->frag_shader, 1);
     uniform_buffers = create_uniform_buffers(&p->vert_shader.info);
-    create_descriptor_pool(&descriptor_pool, &p->vert_shader, &p->frag_shader);
-    descriptor_sets = create_descriptor_sets(layout, &p->vert_shader,&p->frag_shader, descriptor_pool, uniform_buffers);
+    //create_descriptor_pool(&descriptor_pool, &p->vert_shader, &p->frag_shader);
+    descriptor_sets = create_descriptor_sets(layout, &p->vert_shader,&p->frag_shader, p->descriptor_pools[image_index], uniform_buffers);
 	vkDestroyDescriptorSetLayout(vl.device, layout, NULL);
 
 
@@ -1964,6 +1967,9 @@ internal void render_cube_immediate(VkCommandBuffer command_buf, u32 image_index
     shader_set_immediate(&p->vert_shader.info, "view", view.elements, data);
     mat4 proj = perspective_proj_vk(45.0f,window_w/(f32)window_h, 0.1, 10);
     shader_set_immediate(&p->vert_shader.info, "proj", proj.elements, data);
+    f32 color_modifier = 1.0f;
+    shader_set_immediate(&p->vert_shader.info, "modifier", &color_modifier, data);
+
 	
 	
     //copy uniform data to UBO
@@ -2184,12 +2190,14 @@ internal void draw_frame(void)
 
 
 
+    /*
     mat4 model = mat4_mul(mat4_translate(v3(0,0,-4)),mat4_rotate( 360.0f * sin(get_time()) ,v3(1,0,0)));
     shader_set(&vl.base_pipe.vert_shader.info, "model", model.elements);
     mat4 view = look_at(v3(0,0,0), v3(0,0,-1), v3(0,1,0));
     shader_set(&vl.base_pipe.vert_shader.info, "view", view.elements);
     mat4 proj = perspective_proj_vk(45.0f,window_w/(f32)window_h, 0.1, 10);
     shader_set(&vl.base_pipe.vert_shader.info, "proj", proj.elements);
+    */
 	
 	
 
@@ -2197,10 +2205,11 @@ internal void draw_frame(void)
 
 
     
+    //create_descriptor_pool(VkDescriptorPool *descriptor_pool,ShaderObject *vert, ShaderObject *frag)
 	//we reset the command buffer (so we can put new info in to submit)
+    vkResetDescriptorPool(vl.device, vl.base_pipe.descriptor_pools[image_index], NULL);
 	VK_CHECK(vkResetCommandBuffer(vl.command_buffers[image_index], VK_COMMAND_BUFFER_RESET_RELEASE_RESOURCES_BIT));
-	
-	//----BEGIN RENDER PASS----
+	//----BEGIN RENDER P//ASS----
 	VkCommandBufferBeginInfo begin_info = {0};
     begin_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
     begin_info.flags = 0;
@@ -2222,11 +2231,12 @@ internal void draw_frame(void)
 	
 	//we render the scene onto the command buffer
 	
-	render_cube(vl.command_buffers[image_index], image_index);
+	//render_cube(vl.command_buffers[image_index], image_index);
 
     mat4 m = mat4_mul(mat4_translate(v3(1.2,0,-4)),mat4_rotate( 360.0f * sin(get_time()) ,v3(0.2,0.4,0.7)));
     render_cube_immediate(vl.command_buffers[image_index], image_index, &vl.base_pipe, m);
     m = mat4_mul(mat4_translate(v3(-1.2,0,-4)),mat4_rotate( 360.0f * sin(get_time()) ,v3(-0.2,-0.4,-0.7)));
+    //exit(10); sto deutero _immediate skaei
     render_cube_immediate(vl.command_buffers[image_index], image_index, &vl.base_pipe, m);
 	render_fullscreen(vl.command_buffers[image_index], image_index);
 	
@@ -2332,6 +2342,9 @@ internal void cleanup(void)
 	window_destroy(&wnd);
 }
 
+#define EXEC 1
+
+#if defined(EXEC)
 
 int main(void) 
 {
@@ -2354,3 +2367,4 @@ int main(void)
 	//spvc_context_destroy(context);
 	return 0;
 }
+#endif
