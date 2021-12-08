@@ -47,6 +47,16 @@ typedef struct Swapchain
 	VkFramebuffer *framebuffers;
 	u32 image_count;
 }Swapchain;
+	
+typedef struct FrameBufferAttachment 
+{ 
+	VkImage *images;
+	VkFormat image_format;
+	VkExtent2D extent;
+	VkImageView *image_views;
+	VkFramebuffer *framebuffers;
+	u32 image_count;
+}FrameBufferAttachment;
 
 typedef enum ShaderVarFormat{
   SHADER_VAR_FORMAT_UNDEFINED           =   0, // = VK_FORMAT_UNDEFINED
@@ -544,7 +554,7 @@ internal VkPipeline build_pipeline(VkDevice device, PipelineBuilder p,VkRenderPa
 	VkAttachmentDescription color_attachment = {0};
     color_attachment.format = vl.swap.image_format;
     color_attachment.samples = VK_SAMPLE_COUNT_1_BIT;
-    color_attachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+    color_attachment.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
     color_attachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
     color_attachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
     color_attachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
@@ -1329,76 +1339,6 @@ internal void vl_create_logical_device(void)
 
 
 
-internal VkDescriptorSet create_descriptor_set_immediate(VkDescriptorSetLayout layout, ShaderObject *vert,ShaderObject *frag, VkDescriptorPool pool, DataBuffer uni_buffer)
-{
-    VkDescriptorSetAllocateInfo alloc_info = {0};
-    alloc_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
-    alloc_info.descriptorPool = pool;
-    alloc_info.descriptorSetCount = 1;
-    alloc_info.pSetLayouts = &layout;
-    
-    VkDescriptorSet desc_set = {0};
-    VK_CHECK(vkAllocateDescriptorSets(vl.device, &alloc_info, &desc_set));
-    
-        VkDescriptorBufferInfo buffer_info = {0};
-        buffer_info.buffer = uni_buffer.buffer;
-        buffer_info.offset = 0;
-        buffer_info.range = vert->info.descriptor_bindings[0].mem_size; //@check
-		
-		VkDescriptorImageInfo image_info = {0};
-		image_info.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-		image_info.imageView = sample_texture.view;
-		image_info.sampler = sample_texture.sampler;
-        
-        VkWriteDescriptorSet *descriptor_writes = NULL; //dynamic array, look tools.h
-        u32 dw_count = 0;
-
-        for (u32 i = 0; i < vert->info.descriptor_count; ++i)
-        {
-			VkWriteDescriptorSet desc_write = {0};
-			
-            desc_write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-            desc_write.dstSet = desc_set;
-            desc_write.dstBinding = vert->info.descriptor_bindings[i].binding;
-            desc_write.dstArrayElement = 0; //u sure?????????????? @BUG
-            desc_write.descriptorType = vert->info.descriptor_bindings[i].desc_type;
-            desc_write.descriptorCount = 1;
-
-            if (vert->info.descriptor_bindings[i].desc_type == SHADER_DESC_TYPE_UNIFORM_BUFFER)
-                desc_write.pBufferInfo = &buffer_info;
-            else
-                desc_write.pImageInfo = &image_info;
-			
-			buf_push(descriptor_writes, desc_write);
-        }
-        for (u32 i = 0; i < frag->info.descriptor_count; ++i)
-        {
-			VkWriteDescriptorSet desc_write = {0};
-  if (frag->info.descriptor_bindings[i].binding == 0)continue; //@NOTE: this is to ignore default UBO description in fragment shader parsing
-       
-			
-            desc_write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-            desc_write.dstSet = desc_set;
-            desc_write.dstBinding = frag->info.descriptor_bindings[i].binding;
-            desc_write.dstArrayElement = 0; //u sure?????????????? @BUG
-            desc_write.descriptorType = frag->info.descriptor_bindings[i].desc_type;
-            desc_write.descriptorCount = 1;
-
-            if (frag->info.descriptor_bindings[i].desc_type == SHADER_DESC_TYPE_UNIFORM_BUFFER)
-                desc_write.pBufferInfo = &buffer_info;
-            else
-                desc_write.pImageInfo = &image_info;
-			
-			buf_push(descriptor_writes, desc_write);
-        }
-        
-        //printf("update %i with dw_count %i!\n", j, dw_count);
-        vkUpdateDescriptorSets(vl.device, buf_len(descriptor_writes), descriptor_writes, 0, NULL);
-		buf_free(descriptor_writes);
-    return desc_set;
-}
-
-
 internal VkDescriptorSet *create_descriptor_sets(VkDescriptorSetLayout layout, ShaderObject *vert,ShaderObject *frag, VkDescriptorPool pool, DataBuffer *uni_buffers, u32 set_count)
 {
     VkDescriptorSetLayout *layouts = malloc(sizeof(VkDescriptorSetLayout)*set_count);
@@ -1421,8 +1361,8 @@ internal VkDescriptorSet *create_descriptor_sets(VkDescriptorSetLayout layout, S
 		
 		VkDescriptorImageInfo image_info = {0};
 		image_info.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-		image_info.imageView = sample_texture.view;
 		image_info.sampler = sample_texture.sampler;
+		image_info.imageView = sample_texture.view;
         
         VkWriteDescriptorSet *descriptor_writes = NULL; //dynamic array, look tools.h
         u32 dw_count = 0;
@@ -1558,6 +1498,7 @@ internal void vl_create_render_pass(void)
     render_pass_info.subpassCount = 1;
     render_pass_info.pSubpasses = &subpass;
     
+    /*
     VkSubpassDependency dependency = {0};
     dependency.srcSubpass = VK_SUBPASS_EXTERNAL;
     dependency.dstSubpass = 0;
@@ -1567,6 +1508,7 @@ internal void vl_create_render_pass(void)
     dependency.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
     render_pass_info.dependencyCount = 1;
     render_pass_info.pDependencies = &dependency;
+    */
     VK_CHECK(vkCreateRenderPass(vl.device, &render_pass_info, NULL, &vl.render_pass));
     
 }
@@ -2006,57 +1948,6 @@ internal void vl_base_pipelines_init(void)
     pipeline_build_basic(&vl.base_pipe, "base.vert", "base.frag", RPRIMITIVE_TOPOLOGY_TRIANGLE_LIST);
 }
 
-/*
-//manages uniform buffers used for immediate rendering
-typedef struct UniformBufferManager
-{
-    DataBuffer **uniform_buffers;
-    u32 *indexes;
-    u32 swap_image_count;
-    u32 buffers_per_swap_image;
-}UniformBufferManager;
-
-global UniformBufferManager ubo_manager;
-
-internal void ubo_manager_init(u32 buf_per_swap_image)
-{
-    ubo_manager.swap_image_count = vl.swap.image_count;
-    ubo_manager.uniform_buffers = malloc(sizeof(DataBuffer*) * ubo_manager.swap_image_count);
-    ubo_manager.indexes = malloc(sizeof(u32) * ubo_manager.swap_image_count);
-    ubo_manager.buffers_per_swap_image = buf_per_swap_image;
-    for (u32 i = 0; i < ubo_manager.buffers_per_swap_image; ++i)
-    {
-       ubo_manager.uniform_buffers[i] = malloc(sizeof(DataBuffer) * ubo_manager.buffers_per_swap_image); 
-       for (u32 j = 0; j < ubo_manager.buffers_per_swap_image; ++j)
-       {
-           ubo_manager.uniform_buffers[i][j] = (DataBuffer){0};
-           ubo_manager.uniform_buffers[i][j].active = FALSE;
-       }
-       ubo_manager.indexes[i] = 0;
-    }
-}
-
-internal void ubo_manager_reset(u32 image_index) 
-{
-    ubo_manager.indexes[image_index] = 0;
-}
-
-internal u32 ubo_manager_get_next_available_index(u32 image_index)
-{
-    return ubo_manager.indexes[image_index];
-}
-
-internal DataBuffer *ubo_manager_get_next_available_buffer(u32 image_index)
-{
-    u32 buf_index = ubo_manager_get_next_available_index(image_index);
-    DataBuffer *buf = &ubo_manager.uniform_buffers[image_index][buf_index];
-    ubo_manager.indexes[image_index]++;
-    buf_destroy(buf); //the buffer, if there was any valid is destroyed to be filled again
-    return buf;
-}
-
-*/
-
 internal void render_cube_immediate(VkCommandBuffer command_buf, u32 image_index, PipelineObject *p, mat4 model)
 {
 
@@ -2361,6 +2252,15 @@ internal void draw_frame(void)
 	
 	
 	vkCmdEndRenderPass(vl.command_buffers[image_index]);
+
+    vkCmdBeginRenderPass(vl.command_buffers[image_index], &renderpass_info, VK_SUBPASS_CONTENTS_INLINE);
+	
+    render_cube_immediate(vl.command_buffers[image_index], image_index, &vl.base_pipe, m);
+	render_fullscreen(vl.command_buffers[image_index], image_index);
+	
+	
+	vkCmdEndRenderPass(vl.command_buffers[image_index]);
+ 
     VK_CHECK(vkEndCommandBuffer(vl.command_buffers[image_index]));
 	//----END RENDER PASS----
 
