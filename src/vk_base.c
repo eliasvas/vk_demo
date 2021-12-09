@@ -319,6 +319,7 @@ typedef struct VulkanLayer
 	VkCommandBuffer *command_buffers;
 	
 	VkRenderPass render_pass;
+	VkRenderPass render_pass2;
 	
 
     PipelineObject fullscreen_pipe;
@@ -1449,6 +1450,72 @@ internal void create_descriptor_pool(VkDescriptorPool *descriptor_pool,ShaderObj
 }
 
 internal VkFormat find_depth_format(void);
+internal void vl_create_render_pass2(void)
+{
+    VkAttachmentDescription color_attachment = {0};
+    color_attachment.format = vl.swap.image_format;
+    color_attachment.samples = VK_SAMPLE_COUNT_1_BIT;
+    color_attachment.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
+    color_attachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+    color_attachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+    color_attachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+    color_attachment.initialLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+    color_attachment.finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+    //color_attachment.finalLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+	
+	
+    //each subpass references one or more attachments through our descriptions above
+    VkAttachmentReference color_attachment_ref = {0};
+    color_attachment_ref.attachment = 0;
+    color_attachment_ref.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+	
+	
+	VkAttachmentDescription depth_attachment = {0};
+	depth_attachment.format = find_depth_format();
+	depth_attachment.samples = VK_SAMPLE_COUNT_1_BIT;
+	depth_attachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+	depth_attachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+	depth_attachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+	depth_attachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+	depth_attachment.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+	depth_attachment.finalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+    
+	VkAttachmentReference depth_attachment_ref = {0};
+    depth_attachment_ref.attachment = 1;
+    depth_attachment_ref.layout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+	
+    
+    VkSubpassDescription subpass = {0};
+    subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
+    subpass.colorAttachmentCount = 1;
+    subpass.pColorAttachments = &color_attachment_ref;
+	subpass.pDepthStencilAttachment = &depth_attachment_ref;
+    
+	VkAttachmentDescription attachments[2] = {color_attachment, depth_attachment};
+	
+    VkRenderPassCreateInfo render_pass_info = {0};
+    render_pass_info.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
+    render_pass_info.attachmentCount = array_count(attachments);
+    render_pass_info.pAttachments = attachments;
+    render_pass_info.subpassCount = 1;
+    render_pass_info.pSubpasses = &subpass;
+    
+    /*
+    VkSubpassDependency dependency = {0};
+    dependency.srcSubpass = VK_SUBPASS_EXTERNAL;
+    dependency.dstSubpass = 0;
+    dependency.srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT| VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT;
+    dependency.srcAccessMask = 0;
+    dependency.dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT| VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT;
+    dependency.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+    render_pass_info.dependencyCount = 1;
+    render_pass_info.pDependencies = &dependency;
+    */
+    VK_CHECK(vkCreateRenderPass(vl.device, &render_pass_info, NULL, &vl.render_pass2));
+    
+}
+
+
 internal void vl_create_render_pass(void)
 {
     VkAttachmentDescription color_attachment = {0};
@@ -1460,6 +1527,7 @@ internal void vl_create_render_pass(void)
     color_attachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
     color_attachment.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
     color_attachment.finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+    //color_attachment.finalLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
 	
 	
     //each subpass references one or more attachments through our descriptions above
@@ -1800,8 +1868,15 @@ internal void transition_image_layout(VkImage image, VkFormat format, VkImageLay
 		
 		src_stage = VK_PIPELINE_STAGE_TRANSFER_BIT;
 		dst_stage = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+	}else if (old_layout == VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL && new_layout == VK_IMAGE_LAYOUT_PRESENT_SRC_KHR)
+	{
+		barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+		barrier.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+		
+		src_stage = VK_PIPELINE_STAGE_TRANSFER_BIT;
+		dst_stage = VK_PIPELINE_STAGE_TRANSFER_BIT;
 	}
-	
+
 	
 	
 	vkCmdPipelineBarrier(
@@ -2100,6 +2175,7 @@ internal void vl_recreate_swapchain(void)
     vl_create_swapchain();
     vl_create_swapchain_image_views();
     vl_create_render_pass();
+    vl_create_render_pass2();
     
     
 	vl_base_pipelines_init();
@@ -2191,6 +2267,7 @@ internal void vulkan_layer_init(void)
     vl_create_swapchain();
     vl_create_swapchain_image_views();
 	vl_create_render_pass();
+	vl_create_render_pass2();
 	vl_create_depth_resources();
 	vl_create_framebuffers();
     vl_create_command_pool();
@@ -2286,23 +2363,39 @@ internal void draw_frame(void)
 
     mat4 m = mat4_mul(mat4_translate(v3(1.2,0,-4)),mat4_rotate( 360.0f * sin(get_time()) ,v3(0.2,0.4,0.7)));
     render_cube_immediate(vl.command_buffers[image_index], image_index, &vl.base_pipe, m);
+    /*
     for (u32 i = 0; i < 10; ++i)
     {
         m = mat4_mul(mat4_translate(v3(-1.2,0,-4)),mat4_rotate( 360.0f * sin(get_time()) ,v3(-0.2,-0.4,-0.7)));
         render_cube_immediate(vl.command_buffers[image_index], image_index, &vl.base_pipe, m);
     }
+    */
 	render_fullscreen(vl.command_buffers[image_index], image_index);
 	
 	
 	vkCmdEndRenderPass(vl.command_buffers[image_index]);
 
+    ///*
+    renderpass_info.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+    renderpass_info.renderPass = vl.render_pass2;
+    renderpass_info.framebuffer = vl.swap.framebuffers[image_index]; //we bind a _framebuffer_ to a render pass
+    renderpass_info.renderArea.offset = (VkOffset2D){0,0};
+    renderpass_info.renderArea.extent = vl.swap.extent;
+	clear_values[0].color = (VkClearColorValue){{0.0f, 0.0f, 0.0f, 1.0f}};
+	clear_values[1].depthStencil = (VkClearDepthStencilValue){1.0f, 0};
+    renderpass_info.clearValueCount = array_count(clear_values);
+    renderpass_info.pClearValues = clear_values;
     vkCmdBeginRenderPass(vl.command_buffers[image_index], &renderpass_info, VK_SUBPASS_CONTENTS_INLINE);
 	
+    m = mat4_mul(mat4_translate(v3(-1.2,0,-4)),mat4_rotate( 360.0f * sin(get_time()) ,v3(-0.2,-0.4,-0.7)));
     render_cube_immediate(vl.command_buffers[image_index], image_index, &vl.base_pipe, m);
-	render_fullscreen(vl.command_buffers[image_index], image_index);
+	//render_fullscreen(vl.command_buffers[image_index], image_index);
 	
 	
 	vkCmdEndRenderPass(vl.command_buffers[image_index]);
+    //*/
+    //transition_image_layout(vl.swap.images[image_index], vl.swap.image_format, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
+	
  
     VK_CHECK(vkEndCommandBuffer(vl.command_buffers[image_index]));
 	//----END RENDER PASS----
