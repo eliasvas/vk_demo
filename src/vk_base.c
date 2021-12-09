@@ -642,27 +642,8 @@ internal VkDescriptorSetLayout shader_create_descriptor_set_layout(ShaderObject 
     return layout;
 }
 
-internal void shader_set(ShaderMetaInfo *info, const char *name, void *src)
-{
-
-    u32 member_count = info->descriptor_bindings[0].member_count;
-    for(u32 i = 0; i < member_count;++i)
-    {
-        if (strcmp(name, info->descriptor_bindings[0].members[i].name) == 0)
-        {
-            u32 offset = info->descriptor_bindings[0].members[i].offset;
-            u32 size = info->descriptor_bindings[0].members[i].size;
-            void * ubo_mem = info->descriptor_bindings[0].mem;
-            //memcpy(ubo_mem + offset, src, size);
-            memcpy((char*)ubo_mem + offset, src, size);
-            break;
-        }
-    }
-} 
-
 internal void shader_set_immediate(ShaderMetaInfo *info, const char *name, void *src, void *ubo_mem)
 {
-
     u32 member_count = info->descriptor_bindings[0].member_count;
     for(u32 i = 0; i < member_count;++i)
     {
@@ -677,15 +658,6 @@ internal void shader_set_immediate(ShaderMetaInfo *info, const char *name, void 
     }
 } 
 
-
-internal void shader_copy_to_ubo(ShaderMetaInfo *info, DataBuffer *uniform_buffers, u32 image_index)
-{
-	void *data = info->descriptor_bindings[0].mem;
-	
-	VK_CHECK(buf_map(&uniform_buffers[image_index], uniform_buffers[image_index].size, 0));
-	memcpy(uniform_buffers[image_index].mapped, data,info->descriptor_bindings[0].mem_size);
-	buf_unmap(&uniform_buffers[image_index]);
-}
 
 internal void shader_copy_to_immediate(ShaderMetaInfo *info, DataBuffer *uniform_buffers, u32 image_index)
 {
@@ -1632,31 +1604,6 @@ internal void vl_create_command_pool(void)
     VK_CHECK(vkCreateCommandPool(vl.device, &pool_info, NULL, &vl.command_pool));
 }
 
-internal void render_cube(VkCommandBuffer command_buf, u32 image_index)
-{
-	vkCmdBindPipeline(command_buf, VK_PIPELINE_BIND_POINT_GRAPHICS, vl.base_pipe.pipeline);
-		
-    VkBuffer vertex_buffers[] = {vertex_buffer_real.buffer};
-    VkDeviceSize offsets[] = {0};
-    vkCmdBindVertexBuffers(command_buf, 0, 1, vertex_buffers, offsets);
-    vkCmdBindIndexBuffer(command_buf, index_buffer_real.buffer, 0, VK_INDEX_TYPE_UINT32);
-        
- 
-
-
-	//before binding the descriptor set, we update the contents of the UBO associated with that descriptor set
-	shader_copy_to_ubo(&vl.base_pipe.vert_shader.info, vl.base_pipe.uniform_buffers, image_index);
-	
-    vkCmdBindDescriptorSets(vl.command_buffers[image_index], VK_PIPELINE_BIND_POINT_GRAPHICS, 
-                                vl.base_pipe.pipeline_layout, 0, 1, &vl.base_pipe.descriptor_sets[image_index], 0, NULL);
-
-    vkCmdDrawIndexed(command_buf, array_count(cube_indices), 1, 0, 0, 0);
-	
-    
-    //VK_CHECK(vkEndCommandBuffer(command_buf));
-}
-
-
 internal void render_fullscreen(VkCommandBuffer command_buf, u32 image_index)
 {    
 	vkCmdBindPipeline(command_buf, VK_PIPELINE_BIND_POINT_GRAPHICS, vl.fullscreen_pipe.pipeline);
@@ -1992,13 +1939,8 @@ internal void pipeline_build_basic(PipelineObject *p,const char *vert, const cha
 	p->pipeline = build_pipeline(vl.device, pb, vl.render_pass);
 
 
-    //now make a descriptor pool and allocate the descriptor sets we need
-    //p->uniform_buffers = create_uniform_buffers(&p->vert_shader.info);
     for (u32 i = 0;i < vl.swap.image_count; ++i)
         create_descriptor_pool(&p->descriptor_pools[i], &p->vert_shader, &p->frag_shader);
-    //p->descriptor_sets = create_descriptor_sets(layout, &p->vert_shader,&p->frag_shader, p->descriptor_pool, p->uniform_buffers);
-	
-	//do we really have to deallocate the descriptor set after we use it??? @CHECK
 	vkDestroyDescriptorSetLayout(vl.device, layout, NULL);
 }
 
@@ -2062,7 +2004,6 @@ internal void ubo_manager_reset(u32 image_index)
     ubo_manager.indices[image_index] = 0;
 }
 
-
 internal void render_cube_immediate(VkCommandBuffer command_buf, u32 image_index, PipelineObject *p, mat4 model)
 {
     VkDescriptorSetLayout layout = shader_create_descriptor_set_layout(&p->vert_shader, &p->frag_shader, 1);
@@ -2109,10 +2050,6 @@ internal void render_cube_immediate(VkCommandBuffer command_buf, u32 image_index
 
     vkCmdDrawIndexed(command_buf, array_count(cube_indices), 1, 0, 0, 0);
 	
-    
-	//vkDestroyDescriptorPool(vl.device, descriptor_pool, NULL);
-    //for (u32 i = 0; i < vl.swap.image_count; ++i)
-		//buf_destroy(&uniform_buffers[i]);
 }
 
 
@@ -2318,22 +2255,6 @@ internal void draw_frame(void)
     if (images_in_flight[image_index]!=VK_NULL_HANDLE)vkWaitForFences(vl.device, 1, &images_in_flight[image_index], VK_TRUE, UINT64_MAX);
 
 
-
-    /*
-    mat4 model = mat4_mul(mat4_translate(v3(0,0,-4)),mat4_rotate( 360.0f * sin(get_time()) ,v3(1,0,0)));
-    shader_set(&vl.base_pipe.vert_shader.info, "model", model.elements);
-    mat4 view = look_at(v3(0,0,0), v3(0,0,-1), v3(0,1,0));
-    shader_set(&vl.base_pipe.vert_shader.info, "view", view.elements);
-    mat4 proj = perspective_proj_vk(45.0f,window_w/(f32)window_h, 0.1, 10);
-    shader_set(&vl.base_pipe.vert_shader.info, "proj", proj.elements);
-    */
-	
-	
-
-
-
-
-    
     ubo_manager_reset(image_index);
     vkResetDescriptorPool(vl.device, vl.base_pipe.descriptor_pools[image_index], NULL);
 	VK_CHECK(vkResetCommandBuffer(vl.command_buffers[image_index], VK_COMMAND_BUFFER_RESET_RELEASE_RESOURCES_BIT));
@@ -2355,27 +2276,10 @@ internal void draw_frame(void)
 	clear_values[1].depthStencil = (VkClearDepthStencilValue){1.0f, 0};
     renderpass_info.clearValueCount = array_count(clear_values);
     renderpass_info.pClearValues = clear_values;
+
     vkCmdBeginRenderPass(vl.command_buffers[image_index], &renderpass_info, VK_SUBPASS_CONTENTS_INLINE);
-	
-	//we render the scene onto the command buffer
-	
-	//render_cube(vl.command_buffers[image_index], image_index);
-
-    mat4 m = mat4_mul(mat4_translate(v3(1.2,0,-4)),mat4_rotate( 360.0f * sin(get_time()) ,v3(0.2,0.4,0.7)));
-    render_cube_immediate(vl.command_buffers[image_index], image_index, &vl.base_pipe, m);
-    /*
-    for (u32 i = 0; i < 10; ++i)
-    {
-        m = mat4_mul(mat4_translate(v3(-1.2,0,-4)),mat4_rotate( 360.0f * sin(get_time()) ,v3(-0.2,-0.4,-0.7)));
-        render_cube_immediate(vl.command_buffers[image_index], image_index, &vl.base_pipe, m);
-    }
-    */
-	render_fullscreen(vl.command_buffers[image_index], image_index);
-	
-	
 	vkCmdEndRenderPass(vl.command_buffers[image_index]);
-
-    ///*
+    
     renderpass_info.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
     renderpass_info.renderPass = vl.render_pass2;
     renderpass_info.framebuffer = vl.swap.framebuffers[image_index]; //we bind a _framebuffer_ to a render pass
@@ -2385,20 +2289,20 @@ internal void draw_frame(void)
 	clear_values[1].depthStencil = (VkClearDepthStencilValue){1.0f, 0};
     renderpass_info.clearValueCount = array_count(clear_values);
     renderpass_info.pClearValues = clear_values;
+
     vkCmdBeginRenderPass(vl.command_buffers[image_index], &renderpass_info, VK_SUBPASS_CONTENTS_INLINE);
-	
+    mat4 m = mat4_mul(mat4_translate(v3(1.2,0,-4)),mat4_rotate( 360.0f * sin(get_time()) ,v3(0.2,0.4,0.7)));
+    render_cube_immediate(vl.command_buffers[image_index], image_index, &vl.base_pipe, m);
+	render_fullscreen(vl.command_buffers[image_index], image_index);
+	vkCmdEndRenderPass(vl.command_buffers[image_index]);
+
+    vkCmdBeginRenderPass(vl.command_buffers[image_index], &renderpass_info, VK_SUBPASS_CONTENTS_INLINE);
     m = mat4_mul(mat4_translate(v3(-1.2,0,-4)),mat4_rotate( 360.0f * sin(get_time()) ,v3(-0.2,-0.4,-0.7)));
     render_cube_immediate(vl.command_buffers[image_index], image_index, &vl.base_pipe, m);
-	//render_fullscreen(vl.command_buffers[image_index], image_index);
-	
-	
 	vkCmdEndRenderPass(vl.command_buffers[image_index]);
-    //*/
-    //transition_image_layout(vl.swap.images[image_index], vl.swap.image_format, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
 	
  
     VK_CHECK(vkEndCommandBuffer(vl.command_buffers[image_index]));
-	//----END RENDER PASS----
 
     //mark image as used by _this frame_
     images_in_flight[image_index] = in_flight_fences[current_frame];
