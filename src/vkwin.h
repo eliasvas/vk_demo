@@ -1,4 +1,5 @@
 #include "tools.h"
+#define EXEC 1
 
 #if defined(PLATFORM_WINDOWS) && defined(NOGLFW)
 	#include "vulkan/vulkan.h"

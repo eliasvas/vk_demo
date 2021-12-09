@@ -1948,16 +1948,56 @@ internal void vl_base_pipelines_init(void)
     pipeline_build_basic(&vl.base_pipe, "base.vert", "base.frag", RPRIMITIVE_TOPOLOGY_TRIANGLE_LIST);
 }
 
+typedef struct UniformBufferManager
+{
+    DataBuffer **uniform_buffers;
+    u32 *indices;
+    //needed because we can free only uniform buffers NOT currently in use, meaning of the same swapchain image
+    u32 swap_image_count; 
+    u32 buffers_per_swap_image;
+}UniformBufferManager;
+global UniformBufferManager ubo_manager;
+
+internal void ubo_manager_init(u32 buffer_count)
+{
+    ubo_manager.buffers_per_swap_image = buffer_count;
+    ubo_manager.swap_image_count = vl.swap.image_count;
+    ubo_manager.indices = malloc(sizeof(u32) * ubo_manager.swap_image_count);
+    ubo_manager.uniform_buffers = malloc(sizeof(DataBuffer*) * ubo_manager.swap_image_count);
+    for(u32 i = 0; i < ubo_manager.swap_image_count; ++i)
+    {
+        ubo_manager.indices[i] = 0;
+        ubo_manager.uniform_buffers[i] = malloc(sizeof(DataBuffer) * ubo_manager.buffers_per_swap_image);
+    }
+}
+internal DataBuffer *ubo_manager_get_next_buf(u32 image_index)
+{
+    if(ubo_manager.indices[image_index] >= ubo_manager.buffers_per_swap_image)return NULL;
+    u32 buffer_index = ubo_manager.indices[image_index]++;
+    return &ubo_manager.uniform_buffers[image_index][buffer_index];
+}
+internal void ubo_manager_reset(u32 image_index)
+{
+    u32 last_active_index = ubo_manager.indices[image_index] - 1;
+    //printf("last active index: %i\n", last_active_index);
+    for (s32 i = last_active_index; i >= 0; --i)
+    {
+        buf_destroy(&ubo_manager.uniform_buffers[image_index][i]);
+    }
+    ubo_manager.indices[image_index] = 0;
+}
+
+
 internal void render_cube_immediate(VkCommandBuffer command_buf, u32 image_index, PipelineObject *p, mat4 model)
 {
-
-
     VkDescriptorSetLayout layout = shader_create_descriptor_set_layout(&p->vert_shader, &p->frag_shader, 1);
     DataBuffer *uniform_buffer = create_uniform_buffers(&p->vert_shader.info, 1);
     VkDescriptorSet desc_set = create_descriptor_sets(layout, &p->vert_shader,&p->frag_shader, p->descriptor_pools[image_index], uniform_buffer, 1);
-    //DataBuffer *buf = ubo_manager_get_next_available_buffer(image_index);
-    //*buf = *uniform_buffer;
-    //uniform_buffer = buf;
+
+    DataBuffer *buf = ubo_manager_get_next_buf(image_index);
+    if (buf == NULL)return;
+    *buf = *uniform_buffer;
+    uniform_buffer = buf;
 
 	vkDestroyDescriptorSetLayout(vl.device, layout, NULL);
 
@@ -2161,6 +2201,7 @@ internal int vulkan_init(void) {
 	vulkan_layer_init();
 	sample_texture = create_texture_image("../assets/test.png",VK_FORMAT_R8G8B8A8_SRGB);
 	vl_base_pipelines_init();
+    ubo_manager_init(110);
 	
 
 	
@@ -2216,8 +2257,7 @@ internal void draw_frame(void)
 
 
     
-    //create_descriptor_pool(VkDescriptorPool *descriptor_pool,ShaderObject *vert, ShaderObject *frag)
-	//we reset the command buffer (so we can put new info in to submit)
+    ubo_manager_reset(image_index);
     vkResetDescriptorPool(vl.device, vl.base_pipe.descriptor_pools[image_index], NULL);
 	VK_CHECK(vkResetCommandBuffer(vl.command_buffers[image_index], VK_COMMAND_BUFFER_RESET_RELEASE_RESOURCES_BIT));
 	//----BEGIN RENDER P//ASS----
@@ -2246,8 +2286,11 @@ internal void draw_frame(void)
 
     mat4 m = mat4_mul(mat4_translate(v3(1.2,0,-4)),mat4_rotate( 360.0f * sin(get_time()) ,v3(0.2,0.4,0.7)));
     render_cube_immediate(vl.command_buffers[image_index], image_index, &vl.base_pipe, m);
-    m = mat4_mul(mat4_translate(v3(-1.2,0,-4)),mat4_rotate( 360.0f * sin(get_time()) ,v3(-0.2,-0.4,-0.7)));
-    render_cube_immediate(vl.command_buffers[image_index], image_index, &vl.base_pipe, m);
+    for (u32 i = 0; i < 10; ++i)
+    {
+        m = mat4_mul(mat4_translate(v3(-1.2,0,-4)),mat4_rotate( 360.0f * sin(get_time()) ,v3(-0.2,-0.4,-0.7)));
+        render_cube_immediate(vl.command_buffers[image_index], image_index, &vl.base_pipe, m);
+    }
 	render_fullscreen(vl.command_buffers[image_index], image_index);
 	
 	
@@ -2361,10 +2404,8 @@ internal void cleanup(void)
 	window_destroy(&wnd);
 }
 
-#define EXEC 1
 
 #if defined(EXEC)
-
 int main(void) 
 {
 #if defined(PLATFORM_WINDOWS) && defined(NOGLFW)
