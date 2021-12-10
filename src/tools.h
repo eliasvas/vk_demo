@@ -403,7 +403,7 @@ INLINE vec2 vec2_rotate(vec2 v, f32 a) {
 
 INLINE f32 vec2_length(vec2 v)
 {
-    f32 res = sqrt(dot_vec2(v,v)); // (x^2 + y^2)^(1/2)
+    f32 res = sqrt(vec2_dot(v,v)); // (x^2 + y^2)^(1/2)
     return res;
 }
 
@@ -416,7 +416,7 @@ INLINE vec2 vec2_abs(vec2 v)
 INLINE vec2 vec2_normalize(vec2 v)
 {
     vec2 res = {0}; //in case length is zero we return zero vector
-    f32 vec_length = length_vec2(v);
+    f32 vec_length = vec2_length(v);
     if (vec_length > 0.1)
     {
         res.x = v.x * (1.0f/vec_length);
@@ -1377,7 +1377,7 @@ INLINE Quaternion quat_inv(Quaternion l)
 {
     Quaternion res;
 
-    f32 len = sqrt(dot_quat(l,l));
+    f32 len = sqrt(quat_dot(l,l));
     res = quat_divf(l, len);
 
     return res;
@@ -1671,8 +1671,8 @@ INLINE void h32_static_clear(H32_static *h)
 INLINE void H32_static_init(H32_static *h, u32 n)
 {
 	h->n = n;
-	h->keys = malloc(sizeof(u64) * h->n * 20);
-	h->values = malloc(sizeof(u32) * h->n * 20);
+	h->keys = (u64*)malloc(sizeof(u64) * h->n * 20);
+	h->values = (u32*)malloc(sizeof(u32) * h->n * 20);
 	h32_static_clear(h);
 }
 
@@ -1745,7 +1745,7 @@ static int read_file(const char *path, u32 **buffer, size_t *word_count)
 	len = ftell(file);
 	rewind(file);
 
-	*buffer = malloc(len);
+	*buffer = (u32*)malloc(len);
 	if (fread(*buffer, 1, len, file) != (size_t)len)
 	{
 		fclose(file);

@@ -2,8 +2,8 @@
 #define EXEC 1
 
 #if defined(PLATFORM_WINDOWS) && defined(NOGLFW)
-	#include "vulkan/vulkan.h"
-	#include "vulkan/vulkan_win32.h"
+	#include "vulkan.h"
+	#include "vulkan_win32.h"
 	#include "windows.h"
 #else
 	#define GLFW_INCLUDE_VULKAN
@@ -55,7 +55,7 @@ internal void window_create_window_surface(VkInstance instance, Window *wnd,VkSu
 {	
 #if defined(PLATFORM_WINDOWS) && defined(NOGLFW)
 	VkWin32SurfaceCreateInfoKHR surface_create_info = 
-	(VkWin32SurfaceCreateInfoKHR){VK_STRUCTURE_TYPE_WIN32_SURFACE_CREATE_INFO_KHR,NULL,0,wnd->instance,wnd->handle};
+	{VK_STRUCTURE_TYPE_WIN32_SURFACE_CREATE_INFO_KHR,NULL,0,wnd->instance,wnd->handle};
 
 	if (vkCreateWin32SurfaceKHR(instance, &surface_create_info, NULL, surface) != VK_SUCCESS)
 		vk_error("Failed to create win32 window surface!");
@@ -187,7 +187,7 @@ internal u32 window_init_vulkan(Window *wnd, char *window_name, u32 window_w, u3
     }
 	
     // Create window
-    wnd->handle = CreateWindowEx( WS_EX_CLIENTEDGE,"WIN", window_name, WS_OVERLAPPEDWINDOW, 
+    wnd->handle = CreateWindowEx( WS_EX_CLIENTEDGE,"WIN",(LPCWSTR)window_name, WS_OVERLAPPEDWINDOW, 
 			CW_USEDEFAULT, CW_USEDEFAULT, window_w, window_h, NULL, NULL, wnd->instance, NULL );
     if( !wnd->handle ) {
 		printf("Failed to create a window handle!\n");

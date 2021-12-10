@@ -10,9 +10,9 @@ Window wnd;
 
 #define STBI_NO_SIMD
 #define STB_IMAGE_IMPLEMENTATION
-#include "stb_image.h"
+#include "stb_image.h" 
 
-#include "SPIRV/spirv_reflect.h"
+#include "spirv_reflect.h"
 
 internal s32 window_w = 800;
 internal s32 window_h = 600;
@@ -334,7 +334,7 @@ global VulkanLayer vl;
 
 
 //attaches ALLOCATED memory block to buffer!
-internal void buf_bind(DataBuffer *buf, VkDevice offset)
+internal void buf_bind(DataBuffer *buf, VkDeviceSize offset)
 {
 	vkBindBufferMemory(buf->device, buf->buffer, buf->mem, offset);
 }
@@ -719,7 +719,7 @@ internal void shader_reflect(u32 *shader_code, u32 code_size, ShaderMetaInfo *in
 
             desc_binding->binding = desc_info->binding;
             desc_binding->set = desc_info->set;
-            desc_binding->desc_type = desc_info->descriptor_type;
+            desc_binding->desc_type = (ShaderDescType)desc_info->descriptor_type;
             sprintf(desc_binding->name, desc_info->name);
 
             SpvReflectTypeDescription *uniform_struct_desc = desc_info->type_description;
@@ -838,8 +838,8 @@ typedef struct Texture {
 
 global Texture sample_texture;
 
-global current_frame = 0;
-global framebuffer_resized = FALSE;
+global u32 current_frame = 0;
+global u32 framebuffer_resized = FALSE;
 
 const char *validation_layers[]= {
     "VK_LAYER_KHRONOS_validation"
