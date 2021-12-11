@@ -1733,7 +1733,7 @@ read_whole_file_binary(char *filename, u32 *size)
 }
 
 
-static int read_file(const char *path, u32 **buffer, size_t *word_count)
+static int read_file(const char *path, u32 **buffer, u32 *word_count)
 {
 	long len;
 	FILE *file = fopen(path, "rb");
@@ -1746,7 +1746,7 @@ static int read_file(const char *path, u32 **buffer, size_t *word_count)
 	rewind(file);
 
 	*buffer = (u32*)malloc(len);
-	if (fread(*buffer, 1, len, file) != (size_t)len)
+	if (fread(*buffer, 1, len, file) != (u32)len)
 	{
 		fclose(file);
 		free(*buffer);

@@ -20,7 +20,7 @@ if not exist build mkdir build
 pushd build
 REM if not exist spv.lib cl /EHsc  /LD ../ext/SPIRV/*.c
 REM if not exist spv.lib lib -out:spv.lib *.obj 
-cl %compile_flags% %build_options% /MT /Tc ..\ext\SPIRV\spirv_reflect.c /Tc ..\src\vk_base.c /link %link_flags% /out:%application_name%
+cl %compile_flags% %build_options% /MT /Tc ..\ext\SPIRV\spirv_reflect.c /Tc..\src\vk_base.c /link %link_flags% /out:%application_name%
 popd
 
 if not exist build\shaders CALL precompile_shaders

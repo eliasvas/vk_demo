@@ -3,9 +3,12 @@
 #include "stdlib.h"
 #include "string.h"
 
+
+
 #define NOGLFW 1
 #include "vkwin.h"
 Window wnd;
+
 
 
 #define STBI_NO_SIMD
@@ -241,7 +244,7 @@ internal u32 get_attr_desc(VkVertexInputAttributeDescription *attr_desc, ShaderM
             {
                 attr_desc[location].binding = 0;
                 attr_desc[location].location = location;
-                attr_desc[location].format = info->vertex_input_attributes[i].format;
+                attr_desc[location].format = (VkFormat)info->vertex_input_attributes[i].format;
                 attr_desc[location].offset = global_offset;
                 global_offset+= info->vertex_input_attributes[i].size;
                 valid_attribs++;
@@ -339,7 +342,7 @@ internal void buf_bind(DataBuffer *buf, VkDeviceSize offset)
 	vkBindBufferMemory(buf->device, buf->buffer, buf->mem, offset);
 }
 
-internal buf_copy_to(DataBuffer *src,void *data, VkDeviceSize size)
+internal void buf_copy_to(DataBuffer *src,void *data, VkDeviceSize size)
 {
 	assert(src->mapped);
 	memcpy(src->mapped, data, size);
@@ -517,7 +520,8 @@ internal VkPipeline build_pipeline(VkDevice device, PipelineBuilder p,VkRenderPa
     viewport.maxDepth = 1.0f;
     
     VkRect2D scissor = {0};
-    scissor.offset = (VkOffset2D){0, 0};
+    scissor.offset.x = 0;
+	scissor.offset.y = 0;
     scissor.extent = vl.swap.extent;
 	
 	VkPipelineDepthStencilStateCreateInfo depth_stencil = {0};
@@ -529,8 +533,6 @@ internal VkPipeline build_pipeline(VkDevice device, PipelineBuilder p,VkRenderPa
 	depth_stencil.minDepthBounds = 0.0f;
 	depth_stencil.maxDepthBounds = 1.0f;
 	depth_stencil.stencilTestEnable = VK_FALSE;
-	depth_stencil.front = (VkStencilOpState){0};
-	depth_stencil.back = (VkStencilOpState){0};
 	//----------------------------
 	
 	
@@ -609,7 +611,7 @@ internal VkDescriptorSetLayout shader_create_descriptor_set_layout(ShaderObject 
     {
         VkDescriptorSetLayoutBinding binding = {0};
         binding.binding = vert->info.descriptor_bindings[i].binding;
-        binding.descriptorType = vert->info.descriptor_bindings[i].desc_type;
+        binding.descriptorType = (VkDescriptorType)vert->info.descriptor_bindings[i].desc_type;
         binding.descriptorCount = set_count; //N if we want an array of descriptors (dset?)
         binding.stageFlags = VK_SHADER_STAGE_ALL_GRAPHICS;//VK_SHADER_STAGE_VERTEX_BIT;
         binding.pImmutableSamplers = NULL;
@@ -622,7 +624,7 @@ internal VkDescriptorSetLayout shader_create_descriptor_set_layout(ShaderObject 
         VkDescriptorSetLayoutBinding binding = {0};
         binding.binding = frag->info.descriptor_bindings[i].binding;
         if (frag->info.descriptor_bindings[i].binding == 0)continue; //@NOTE: this is to ignore default UBO description in fragment shader parsing
-        binding.descriptorType = frag->info.descriptor_bindings[i].desc_type;
+        binding.descriptorType = (VkDescriptorType)frag->info.descriptor_bindings[i].desc_type;
         binding.descriptorCount = set_count; //N if we want an array of descriptors (dset?)
         binding.stageFlags = VK_SHADER_STAGE_ALL_GRAPHICS;//VK_SHADER_STAGE_FRAGMENT_BIT;
         binding.pImmutableSamplers = NULL;
@@ -689,7 +691,7 @@ internal void shader_reflect(u32 *shader_code, u32 code_size, ShaderMetaInfo *in
         SpvReflectInterfaceVariable *curvar = input_vars[i];
 
         attr->location = curvar->location;
-        attr->format = curvar->format;
+        attr->format = (ShaderVarFormat)curvar->format;
         attr->builtin = curvar->built_in;
 
         if (curvar->array.dims_count > 0)attr->array_count = curvar->array.dims[0];
@@ -697,7 +699,7 @@ internal void shader_reflect(u32 *shader_code, u32 code_size, ShaderMetaInfo *in
 
         attr->size = get_format_size(attr->format) * attr->array_count; //@THIS IS TEMPORARY (DELETE THIS)
 
-        sprintf(attr->name, input_vars[i]->name);
+        sprintf((char*const)attr->name, input_vars[i]->name);
         //printf("vertex input variable %s is at location: %i[F%i], size=%i\n", attr->name, attr->location, attr->format, attr->size);
     }
     //descriptor set (UBO)
@@ -728,7 +730,7 @@ internal void shader_reflect(u32 *shader_code, u32 code_size, ShaderMetaInfo *in
             {
                 //add a type descriptor for each uniform in the uniform buffer
                 SpvOp type = uniform_struct_desc->members[i].op;
-                char *name = uniform_struct_desc->members[i].struct_member_name;
+                const char *name = uniform_struct_desc->members[i].struct_member_name;
                 sprintf(desc_binding->members[i].name, name);
 
                 u32 type_flags = uniform_struct_desc->members[i].type_flags;
@@ -749,7 +751,7 @@ internal void shader_reflect(u32 *shader_code, u32 code_size, ShaderMetaInfo *in
             for(u32 i = 0; i < desc_binding->member_count;++i)
             {
                 SpvReflectBlockVariable cur_var = uniform_struct.members[i];
-                char *name = cur_var.name;
+                const char *name = cur_var.name;
                 desc_binding->members[i].size = cur_var.size;
                 desc_binding->members[i].padded_size = cur_var.padded_size;
                 desc_binding->members[i].offset = cur_var.offset;
@@ -781,7 +783,7 @@ internal void shader_create_dynamic(VkDevice device, ShaderObject *shader, const
 	u32 code_size;
 	u32 *shader_code = NULL;
 	read_file(new_file, &shader_code, &code_size);
-	shader->module = create_shader_module(shader_code, code_size);
+	shader->module = create_shader_module((char*)shader_code, code_size);
 	shader->uses_push_constants = FALSE;
     shader_reflect(shader_code, code_size, &shader->info);
 	//printf("Shader: %s has %i input variable(s)!\n", filename, shader->info.input_variable_count);
@@ -798,7 +800,7 @@ internal void shader_create(VkDevice device, ShaderObject *shader, const char *f
 	u32 code_size;
 	u32 *shader_code = NULL;
 	if (read_file(path, &shader_code, &code_size) == -1){shader_create_dynamic(device, shader, filename, stage);return;};
-	shader->module = create_shader_module(shader_code, code_size);
+	shader->module = create_shader_module((char*)shader_code, code_size);
 	shader->uses_push_constants = FALSE;
     shader_reflect(shader_code, code_size, &shader->info);
 	//printf("Shader: %s has %i input variable(s)!\n", filename, shader->info.input_variable_count);
@@ -907,7 +909,7 @@ internal u32 cube_indices[] = {
 };
 internal Vertex *cube_build_verts(void)
 {
-	Vertex *verts = malloc(sizeof(Vertex) * 24);
+	Vertex *verts = (Vertex*)malloc(sizeof(Vertex) * 24);
 	for (u32 i =0; i < 24; ++i)
 	{
 		verts[i].pos = cube_positions[i];
@@ -968,7 +970,7 @@ internal SwapChainSupportDetails query_swapchain_support(VkPhysicalDevice device
     
     if (format_count != 0)
     {
-        details.formats = malloc(sizeof(VkSurfaceFormatKHR) * format_count);
+        details.formats = (VkSurfaceFormatKHR*)malloc(sizeof(VkSurfaceFormatKHR) * format_count);
         vkGetPhysicalDeviceSurfaceFormatsKHR(device, vl.surface, &format_count, details.formats);
     }
     //[2]: finally we query available presentation modes
@@ -978,7 +980,7 @@ internal SwapChainSupportDetails query_swapchain_support(VkPhysicalDevice device
     
     if (present_mode_count != 0)
     {
-        details.present_modes = malloc(sizeof(VkPresentModeKHR) * present_mode_count);
+        details.present_modes = (VkPresentModeKHR*)malloc(sizeof(VkPresentModeKHR) * present_mode_count);
         vkGetPhysicalDeviceSurfacePresentModesKHR(device, vl.surface, &present_mode_count, details.present_modes);
     }
     
@@ -990,7 +992,7 @@ internal u32 check_validation_layer_support(void){
 	u32 layer_count;
 	vkEnumerateInstanceLayerProperties(&layer_count, NULL);
     
-	VkLayerProperties *available_layers = malloc(sizeof(VkLayerProperties) * layer_count);
+	VkLayerProperties *available_layers = (VkLayerProperties*)malloc(sizeof(VkLayerProperties) * layer_count);
 	vkEnumerateInstanceLayerProperties(&layer_count, available_layers);
 	for (u32 i = 0; i < array_count(validation_layers); ++i)
 	{
@@ -1044,7 +1046,7 @@ internal void vl_create_instance(void) {
 	//(OPTIONAL): extension support
 	u32 ext_count = 0;
 	vkEnumerateInstanceExtensionProperties(NULL, &ext_count, NULL);
-	VkExtensionProperties *extensions = malloc(sizeof(VkExtensionProperties) * ext_count);
+	VkExtensionProperties *extensions = (VkExtensionProperties*)malloc(sizeof(VkExtensionProperties) * ext_count);
 	vkEnumerateInstanceExtensionProperties(NULL, &ext_count, extensions);
     /* //prints supported vl.instance extensions
 	for (u32 i = 0; i < ext_count; ++i)
@@ -1071,7 +1073,7 @@ internal QueueFamilyIndices find_queue_families(VkPhysicalDevice device)
     u32 queue_family_count = 0;
     vkGetPhysicalDeviceQueueFamilyProperties(device, &queue_family_count, NULL);
     
-    VkQueueFamilyProperties *queue_families = malloc(sizeof(VkQueueFamilyProperties) * queue_family_count);
+    VkQueueFamilyProperties *queue_families = (VkQueueFamilyProperties*)malloc(sizeof(VkQueueFamilyProperties) * queue_family_count);
     vkGetPhysicalDeviceQueueFamilyProperties(device, &queue_family_count, queue_families);
     VkBool32 present_support = FALSE;
     for (u32 i = 0; i < queue_family_count; ++i)
@@ -1093,7 +1095,7 @@ internal u32 check_device_extension_support(VkPhysicalDevice device)
 {
     u32 ext_count;
     vkEnumerateDeviceExtensionProperties(device, NULL, &ext_count, NULL);
-    VkExtensionProperties *available_extensions = malloc(sizeof(VkExtensionProperties) * ext_count);
+    VkExtensionProperties *available_extensions = (VkExtensionProperties*)malloc(sizeof(VkExtensionProperties) * ext_count);
     
     vkEnumerateDeviceExtensionProperties(device, NULL, &ext_count, available_extensions);
     for (u32 i = 0; i < array_count(device_extensions); ++i)
@@ -1136,7 +1138,7 @@ internal void vl_pick_physical_device(void) {
     if (device_count == 0)
         vk_error("Failed to find GPUs with Vulkan support!");
     
-    VkPhysicalDevice *devices = malloc(sizeof(VkPhysicalDevice) * device_count);
+    VkPhysicalDevice *devices = (VkPhysicalDevice*)malloc(sizeof(VkPhysicalDevice) * device_count);
     vkEnumeratePhysicalDevices(vl.instance, &device_count, devices);
     for (u32 i = 0; i < device_count; ++i)
         if (is_device_suitable(devices[i]))
@@ -1234,7 +1236,7 @@ internal void vl_create_swapchain(void)
     VK_CHECK(vkCreateSwapchainKHR(vl.device, &create_info, NULL, &vl.swap.swapchain));
     
     vkGetSwapchainImagesKHR(vl.device, vl.swap.swapchain, &image_count, NULL);
-    vl.swap.images = malloc(sizeof(VkImage) * image_count);
+    vl.swap.images = (VkImage*)malloc(sizeof(VkImage) * image_count);
     vkGetSwapchainImagesKHR(vl.device, vl.swap.swapchain, &image_count, vl.swap.images);
     vl.swap.image_format = surface_format.format;
     vl.swap.extent = extent;
@@ -1262,7 +1264,7 @@ internal VkImageView create_image_view(VkImage image, VkFormat format,  VkImageA
 
 internal void vl_create_swapchain_image_views(void)
 {
-    vl.swap.image_views = malloc(sizeof(VkImageView) * vl.swap.image_count);
+    vl.swap.image_views = (VkImageView*)malloc(sizeof(VkImageView) * vl.swap.image_count);
     for (u32 i = 0; i < vl.swap.image_count; ++i)
 		vl.swap.image_views[i] = create_image_view(vl.swap.images[i], vl.swap.image_format,VK_IMAGE_ASPECT_COLOR_BIT);
 }
@@ -1273,8 +1275,11 @@ internal void vl_create_logical_device(void)
     QueueFamilyIndices indices = find_queue_families(vl.physical_device);
     
     f32 queue_priority = 1.0f;
-    VkDeviceQueueCreateInfo queue_create_info[2] = {0};
-    
+#ifdef __cplusplus
+    VkDeviceQueueCreateInfo queue_create_info[2] = {};
+#else
+	VkDeviceQueueCreateInfo queue_create_info[2] = {0};
+#endif     
     queue_create_info[0].sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
     queue_create_info[0].queueFamilyIndex = indices.graphics_family;
     queue_create_info[0].queueCount = 1;
@@ -1314,7 +1319,7 @@ internal void vl_create_logical_device(void)
 
 internal VkDescriptorSet *create_descriptor_sets(VkDescriptorSetLayout layout, ShaderObject *vert,ShaderObject *frag, VkDescriptorPool pool, DataBuffer *uni_buffers, u32 set_count)
 {
-    VkDescriptorSetLayout *layouts = malloc(sizeof(VkDescriptorSetLayout)*set_count);
+    VkDescriptorSetLayout *layouts = (VkDescriptorSetLayout*)malloc(sizeof(VkDescriptorSetLayout)*set_count);
     for (u32 i = 0; i < set_count; ++i)
         layouts[i] = layout;
     VkDescriptorSetAllocateInfo alloc_info = {0};
@@ -1323,7 +1328,7 @@ internal VkDescriptorSet *create_descriptor_sets(VkDescriptorSetLayout layout, S
     alloc_info.descriptorSetCount = set_count;
     alloc_info.pSetLayouts = layouts;
     
-    VkDescriptorSet *desc_sets = malloc(sizeof(VkDescriptorSet) * set_count);
+    VkDescriptorSet *desc_sets = (VkDescriptorSet*)malloc(sizeof(VkDescriptorSet) * set_count);
     VK_CHECK(vkAllocateDescriptorSets(vl.device, &alloc_info, desc_sets));
     
     for (u32 j = 0; j < set_count; ++j) {
@@ -1348,7 +1353,7 @@ internal VkDescriptorSet *create_descriptor_sets(VkDescriptorSetLayout layout, S
             desc_write.dstSet = desc_sets[j];
             desc_write.dstBinding = vert->info.descriptor_bindings[i].binding;
             desc_write.dstArrayElement = 0; //u sure?????????????? @BUG
-            desc_write.descriptorType = vert->info.descriptor_bindings[i].desc_type;
+            desc_write.descriptorType = (VkDescriptorType)vert->info.descriptor_bindings[i].desc_type;
             desc_write.descriptorCount = 1;
 
             if (vert->info.descriptor_bindings[i].desc_type == SHADER_DESC_TYPE_UNIFORM_BUFFER)
@@ -1368,7 +1373,7 @@ internal VkDescriptorSet *create_descriptor_sets(VkDescriptorSetLayout layout, S
             desc_write.dstSet = desc_sets[j];
             desc_write.dstBinding = frag->info.descriptor_bindings[i].binding;
             desc_write.dstArrayElement = 0; //u sure?????????????? @BUG
-            desc_write.descriptorType = frag->info.descriptor_bindings[i].desc_type;
+            desc_write.descriptorType =(VkDescriptorType)frag->info.descriptor_bindings[i].desc_type;
             desc_write.descriptorCount = 1;
 
             if (frag->info.descriptor_bindings[i].desc_type == SHADER_DESC_TYPE_UNIFORM_BUFFER)
@@ -1396,7 +1401,7 @@ internal void create_descriptor_pool(VkDescriptorPool *descriptor_pool,ShaderObj
     for (u32 i = 0; i < vert->info.descriptor_count; ++i)
     {
 		
-        ps.type = vert->info.descriptor_bindings[i].desc_type;
+        ps.type = (VkDescriptorType)vert->info.descriptor_bindings[i].desc_type;
         ps.descriptorCount = vl.swap.image_count * 1000; //do we need to specify big descriptor count?
 		buf_push(pool_size, ps);
     }
@@ -1405,7 +1410,7 @@ internal void create_descriptor_pool(VkDescriptorPool *descriptor_pool,ShaderObj
     {  
         if (frag->info.descriptor_bindings[i].binding == 0)continue; //@NOTE: this is to ignore default UBO description in fragment shader parsing
        
-        ps.type = frag->info.descriptor_bindings[i].desc_type;
+        ps.type = (VkDescriptorType)frag->info.descriptor_bindings[i].desc_type;
         ps.descriptorCount = vl.swap.image_count * 1000; //do we need to specify big descriptor count?
         buf_push(pool_size, ps);
     }
@@ -1555,7 +1560,7 @@ internal void vl_create_render_pass(void)
 
 internal void vl_create_framebuffers(void)
 {
-    vl.swap.framebuffers = malloc(sizeof(VkFramebuffer) * vl.swap.image_count); 
+    vl.swap.framebuffers = (VkFramebuffer*)malloc(sizeof(VkFramebuffer) * vl.swap.image_count); 
     for (u32 i = 0; i < vl.swap.image_count; ++i)
     {
         VkImageView attachments[] = {vl.swap.image_views[i], vl.depth_image_view};
@@ -1613,7 +1618,7 @@ internal void render_fullscreen(VkCommandBuffer command_buf, u32 image_index)
 
 internal void vl_create_command_buffers(void)
 {
-    vl.command_buffers = malloc(sizeof(VkCommandBuffer) * vl.swap.image_count);
+    vl.command_buffers = (VkCommandBuffer*)malloc(sizeof(VkCommandBuffer) * vl.swap.image_count);
     VkCommandBufferAllocateInfo alloc_info = {0};
     alloc_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
     alloc_info.commandPool = vl.command_pool; //where to allocate the buffer from
@@ -1851,12 +1856,23 @@ internal void copy_buffer_to_image(VkBuffer buffer, VkImage image, u32 width, u3
 	region.imageSubresource.baseArrayLayer = 0;
 	region.imageSubresource.layerCount = 1;
 
+#ifdef __cplusplus
+	region.imageOffset = {0, 0, 0};
+	region.imageExtent = {
+		width,
+		height,
+		1
+	};
+#else
 	region.imageOffset = (VkOffset3D){0, 0, 0};
 	region.imageExtent = (VkExtent3D){
 		width,
 		height,
 		1
 	};
+#endif
+
+	
 		
 	vkCmdCopyBufferToImage(
 		command_buf,
@@ -1901,8 +1917,8 @@ internal DataBuffer *create_uniform_buffers(ShaderMetaInfo *info, u32 buffer_cou
     
     for (u32 i = 0; i < buffer_count; ++i)
     {
-        create_buffer(VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
-                      VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,&uni_buffers[i], buf_size, NULL);
+        create_buffer(VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, (VkMemoryPropertyFlagBits)(VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+                      VK_MEMORY_PROPERTY_HOST_COHERENT_BIT),&uni_buffers[i], buf_size, NULL);
     }
     return uni_buffers;
 }
@@ -1913,9 +1929,11 @@ internal void pipeline_build_basic(PipelineObject *p,const char *vert, const cha
     VkVertexInputBindingDescription bind_desc;
     VkVertexInputAttributeDescription attr_desc[32];
 	
-
-    PipelineBuilder pb = {0};
-
+#ifdef __cplusplus
+    PipelineBuilder pb = {};
+#else
+	PipelineBuilder pb = {0};
+#endif
     //read shaders and register them in the pipeline builder
 	shader_create(vl.device, &p->vert_shader, vert, VK_SHADER_STAGE_VERTEX_BIT); 
 	shader_create(vl.device, &p->frag_shader, frag, VK_SHADER_STAGE_FRAGMENT_BIT);
@@ -1925,7 +1943,7 @@ internal void pipeline_build_basic(PipelineObject *p,const char *vert, const cha
 
     //make shader input attributes to a valid vertex input info for the pipeline (+misc pipeline stuff)
     pb.vertex_input_info = pipe_vertex_input_state_create_info(&p->vert_shader, &bind_desc, attr_desc);
-	pb.input_asm = pipe_input_assembly_create_info(topology);
+	pb.input_asm = pipe_input_assembly_create_info((VkPrimitiveTopology)topology);
 	pb.rasterizer = pipe_rasterization_state_create_info(VK_POLYGON_MODE_FILL);
 	pb.multisampling = pipe_multisampling_state_create_info();
 	pb.color_blend_attachment = pipe_color_blend_attachment_state();
@@ -1979,12 +1997,12 @@ internal void ubo_manager_init(u32 buffer_count)
 {
     ubo_manager.buffers_per_swap_image = buffer_count;
     ubo_manager.swap_image_count = vl.swap.image_count;
-    ubo_manager.indices = malloc(sizeof(u32) * ubo_manager.swap_image_count);
-    ubo_manager.uniform_buffers = malloc(sizeof(DataBuffer*) * ubo_manager.swap_image_count);
+    ubo_manager.indices = (u32*)malloc(sizeof(u32) * ubo_manager.swap_image_count);
+    ubo_manager.uniform_buffers = (DataBuffer**)malloc(sizeof(DataBuffer*) * ubo_manager.swap_image_count);
     for(u32 i = 0; i < ubo_manager.swap_image_count; ++i)
     {
         ubo_manager.indices[i] = 0;
-        ubo_manager.uniform_buffers[i] = malloc(sizeof(DataBuffer) * ubo_manager.buffers_per_swap_image);
+        ubo_manager.uniform_buffers[i] = (DataBuffer*)malloc(sizeof(DataBuffer) * ubo_manager.buffers_per_swap_image);
     }
 }
 internal DataBuffer *ubo_manager_get_next_buf(u32 image_index)
@@ -2008,7 +2026,7 @@ internal void render_cube_immediate(VkCommandBuffer command_buf, u32 image_index
 {
     VkDescriptorSetLayout layout = shader_create_descriptor_set_layout(&p->vert_shader, &p->frag_shader, 1);
     DataBuffer *uniform_buffer = create_uniform_buffers(&p->vert_shader.info, 1);
-    VkDescriptorSet desc_set = create_descriptor_sets(layout, &p->vert_shader,&p->frag_shader, p->descriptor_pools[image_index], uniform_buffer, 1);
+    VkDescriptorSet *desc_set = create_descriptor_sets(layout, &p->vert_shader,&p->frag_shader, p->descriptor_pools[image_index], uniform_buffer, 1);
 
     DataBuffer *buf = ubo_manager_get_next_buf(image_index);
     if (buf == NULL)return;
@@ -2057,10 +2075,10 @@ internal void render_cube_immediate(VkCommandBuffer command_buf, u32 image_index
 
 internal void create_sync_objects(void)
 {
-    image_available_semaphores = malloc(sizeof(VkSemaphore) * MAX_FRAMES_IN_FLIGHT);
-    render_finished_semaphores = malloc(sizeof(VkSemaphore) * MAX_FRAMES_IN_FLIGHT);
-    in_flight_fences = malloc(sizeof(VkFence) * MAX_FRAMES_IN_FLIGHT);
-    images_in_flight = malloc(sizeof(VkFence) * vl.swap.image_count);
+    image_available_semaphores = (VkSemaphore*)malloc(sizeof(VkSemaphore) * MAX_FRAMES_IN_FLIGHT);
+    render_finished_semaphores = (VkSemaphore*)malloc(sizeof(VkSemaphore) * MAX_FRAMES_IN_FLIGHT);
+    in_flight_fences = (VkFence*)malloc(sizeof(VkFence) * MAX_FRAMES_IN_FLIGHT);
+    images_in_flight = (VkFence*)malloc(sizeof(VkFence) * vl.swap.image_count);
     for (u32 i = 0; i < vl.swap.image_count; ++i)images_in_flight[i] = VK_NULL_HANDLE;
     
     VkSemaphoreCreateInfo semaphore_info = {0};
@@ -2072,9 +2090,9 @@ internal void create_sync_objects(void)
     
     for (u32 i = 0; i < MAX_FRAMES_IN_FLIGHT; ++i)
     {
-        VK_CHECK(vkCreateSemaphore(vl.device, &semaphore_info, NULL, &image_available_semaphores[i])|| 
+        vkCreateSemaphore(vl.device, &semaphore_info, NULL, &image_available_semaphores[i])|| 
             vkCreateSemaphore(vl.device, &semaphore_info, NULL, &render_finished_semaphores[i])||
-            vkCreateFence(vl.device, &fence_info, NULL, &in_flight_fences[i]));
+            vkCreateFence(vl.device, &fence_info, NULL, &in_flight_fences[i]);
     }
 }
 
@@ -2102,7 +2120,7 @@ internal void vl_cleanup_swapchain(void)
 internal void vl_recreate_swapchain(void)
 {
     //in case of window minimization (w = 0, h = 0) we wait until we get a proper window again
-    s32 width = 0, height = 0;
+    u32 width = 0, height = 0;
 	window_get_framebuffer_size(&wnd, &width, &height);
     
     
@@ -2163,7 +2181,7 @@ internal Texture create_texture_image(char *filename, VkFormat format)
 	if (!pixels)
 		vk_error("Error loading image!");
 	create_buffer(VK_BUFFER_USAGE_TRANSFER_SRC_BIT, 
-	VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, &idb, image_size, pixels);
+	(VkMemoryPropertyFlagBits)(VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT), &idb, image_size, pixels);
 	//[3]: we free the cpu side image, we don't need it
 	stbi_image_free(pixels);
 	//[4]: we create the VkImage that is undefined right now
@@ -2196,7 +2214,11 @@ internal Texture create_texture_image(char *filename, VkFormat format)
 
 internal void vulkan_layer_init(void)
 {
+#ifdef __cplusplus
+	vl = {};
+#else
 	vl = (VulkanLayer){0};
+#endif
 	vl_create_instance();
     create_surface();
     vl_pick_physical_device();
@@ -2222,14 +2244,14 @@ internal int vulkan_init(void) {
 	Vertex *cube_vertices = cube_build_verts();
 	//create vertex buffer @check first param
 	create_buffer(VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, 
-	VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, 
+	(VkMemoryPropertyFlagBits)(VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT), 
 	&vertex_buffer_real, sizeof(Vertex) * 24, cube_vertices);
 	
 	
 	
 	//create index buffer
 	create_buffer(VK_BUFFER_USAGE_INDEX_BUFFER_BIT, 
-	VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, 
+	(VkMemoryPropertyFlagBits)(VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT), 
 	&index_buffer_real, sizeof(cube_indices[0]) * array_count(cube_indices), cube_indices);
 	
 	
@@ -2269,11 +2291,18 @@ internal void draw_frame(void)
     renderpass_info.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
     renderpass_info.renderPass = vl.render_pass;
     renderpass_info.framebuffer = vl.swap.framebuffers[image_index]; //we bind a _framebuffer_ to a render pass
-    renderpass_info.renderArea.offset = (VkOffset2D){0,0};
+    renderpass_info.renderArea.offset.x = 0;
+	renderpass_info.renderArea.offset.y = 0;
     renderpass_info.renderArea.extent = vl.swap.extent;
 	VkClearValue clear_values[2] = {0};
+#ifdef __cplusplus
+	clear_values[0].color = {{0.0f, 0.0f, 0.0f, 1.0f}};
+	clear_values[1].depthStencil = {1.0f, 0};
+#else
 	clear_values[0].color = (VkClearColorValue){{0.0f, 0.0f, 0.0f, 1.0f}};
 	clear_values[1].depthStencil = (VkClearDepthStencilValue){1.0f, 0};
+#endif
+	
     renderpass_info.clearValueCount = array_count(clear_values);
     renderpass_info.pClearValues = clear_values;
 
@@ -2283,10 +2312,17 @@ internal void draw_frame(void)
     renderpass_info.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
     renderpass_info.renderPass = vl.render_pass2;
     renderpass_info.framebuffer = vl.swap.framebuffers[image_index]; //we bind a _framebuffer_ to a render pass
-    renderpass_info.renderArea.offset = (VkOffset2D){0,0};
+    renderpass_info.renderArea.offset.x= 0;
+	renderpass_info.renderArea.offset.y= 0;
     renderpass_info.renderArea.extent = vl.swap.extent;
+#ifdef __cplusplus
+	clear_values[0].color = {{0.0f, 0.0f, 0.0f, 1.0f}};
+	clear_values[1].depthStencil = {1.0f, 0};
+#else
 	clear_values[0].color = (VkClearColorValue){{0.0f, 0.0f, 0.0f, 1.0f}};
 	clear_values[1].depthStencil = (VkClearDepthStencilValue){1.0f, 0};
+#endif
+	
     renderpass_info.clearValueCount = array_count(clear_values);
     renderpass_info.pClearValues = clear_values;
 

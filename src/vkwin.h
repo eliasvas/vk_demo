@@ -64,6 +64,7 @@ internal void window_create_window_surface(VkInstance instance, Window *wnd,VkSu
         vk_error("Failed to create glfw window surface!");
 #endif
 }
+
 internal void window_get_framebuffer_size(Window *wnd, u32 *width, u32 *height)
 {
 #if defined(PLATFORM_WINDOWS) && defined(NOGLFW)
@@ -74,7 +75,7 @@ RECT rect;
 	  *height = rect.bottom - rect.top;
 	}
 #else
-	glfwGetFramebufferSize(wnd->glfw_window, &width, &height);
+	glfwGetFramebufferSize(wnd->glfw_window, width, height);
 #endif
 }
 
@@ -179,7 +180,7 @@ internal u32 window_init_vulkan(Window *wnd, char *window_name, u32 window_w, u3
     wc.hCursor       = LoadCursor(NULL, IDC_ARROW);
     wc.hbrBackground = (HBRUSH)(COLOR_WINDOW+1);
     wc.lpszMenuName  = NULL;
-    wc.lpszClassName = "WIN";
+    wc.lpszClassName = (LPCSTR)"WIN";
     wc.hIconSm       = NULL;
     if( !RegisterClassEx( &wc ) ) {
 		printf("Failed to register class\n");
@@ -187,7 +188,7 @@ internal u32 window_init_vulkan(Window *wnd, char *window_name, u32 window_w, u3
     }
 	
     // Create window
-    wnd->handle = CreateWindowEx( WS_EX_CLIENTEDGE,"WIN",(LPCWSTR)window_name, WS_OVERLAPPEDWINDOW, 
+    wnd->handle = CreateWindowEx( WS_EX_CLIENTEDGE,(LPCSTR)"WIN",(LPCSTR)window_name, WS_OVERLAPPEDWINDOW, 
 			CW_USEDEFAULT, CW_USEDEFAULT, window_w, window_h, NULL, NULL, wnd->instance, NULL );
     if( !wnd->handle ) {
 		printf("Failed to create a window handle!\n");
