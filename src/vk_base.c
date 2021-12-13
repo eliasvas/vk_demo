@@ -64,12 +64,14 @@ typedef struct FrameBufferAttachment
 	u32 image_count;
 }FrameBufferAttachment;
 
+
+#define MAX_ATTACHMENTS_COUNT 4
 typedef struct FrameBufferObject
 {
 	u32 width, height; //should framebuffers be RESIZED when the swapchain resizes??????
 	VkFramebuffer framebuffers[MAX_SWAP_IMAGE_COUNT];
 	FrameBufferAttachment depth_attachment;
-	FrameBufferAttachment attachments[3]; //pos,color,normal?
+	FrameBufferAttachment attachments[MAX_ATTACHMENTS_COUNT]; //pos,color,normal?
 	u32 attachment_count;
 	VkRenderPass renderpass;
 }FrameBufferObject;
@@ -1488,9 +1490,8 @@ internal VkRenderPass create_render_pass(VkAttachmentLoadOp load_op,VkImageLayou
 	depth_attachment.finalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
     
 	VkAttachmentReference depth_attachment_ref = {0};
-    depth_attachment_ref.attachment = 1;
+    depth_attachment_ref.attachment = color_attachment_count; //for 1 attachment its in 1, for 2 in 2([0,1,2]) and so on..
     depth_attachment_ref.layout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
-	buf_push(attachment_refs, depth_attachment_ref);
     
     VkSubpassDescription subpass = {0};
     subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
@@ -1499,12 +1500,18 @@ internal VkRenderPass create_render_pass(VkAttachmentLoadOp load_op,VkImageLayou
 	subpass.pDepthStencilAttachment = &depth_attachment_ref;
     
 	
-	VkAttachmentDescription attachments[2] = {color_attachment, depth_attachment};
+	VkAttachmentDescription *attachment_descs = NULL;
+	for (u32 i = 0; i < color_attachment_count; ++i)
+	{
+		buf_push(attachment_descs, color_attachment);
+	}
+	if (depth_attachment_active)
+		buf_push(attachment_descs, depth_attachment);
 	
     VkRenderPassCreateInfo render_pass_info = {0};
     render_pass_info.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
-    render_pass_info.attachmentCount = array_count(attachments);
-    render_pass_info.pAttachments = attachments;
+    render_pass_info.attachmentCount = color_attachment_count + depth_attachment_active;
+    render_pass_info.pAttachments = attachment_descs;
     render_pass_info.subpassCount = 1;
     render_pass_info.pSubpasses = &subpass;
     
@@ -1520,6 +1527,9 @@ internal VkRenderPass create_render_pass(VkAttachmentLoadOp load_op,VkImageLayou
     render_pass_info.pDependencies = &dependency;
     //*/
     VK_CHECK(vkCreateRenderPass(vl.device, &render_pass_info, NULL, &render_pass));
+	
+	buf_free(attachment_refs);
+	buf_free(attachment_descs);
     return render_pass;
 }
 
