@@ -20,6 +20,8 @@ Window wnd;
 internal s32 window_w = 800;
 internal s32 window_h = 600;
 
+#define MAX_SWAP_IMAGE_COUNT 4
+
 #define VK_CHECK(x)                                                 \
 	do                                                              \
 	{                                                               \
@@ -50,16 +52,30 @@ typedef struct Swapchain
 	VkFramebuffer *framebuffers;
 	u32 image_count;
 }Swapchain;
-	
+
 typedef struct FrameBufferAttachment 
 { 
-	VkImage *images;
-	VkFormat image_format;
-	VkExtent2D extent;
-	VkImageView *image_views;
-	VkFramebuffer *framebuffers;
+	VkImage images[MAX_SWAP_IMAGE_COUNT];
+	//VkExtent2D extent;
+	VkImageView views[MAX_SWAP_IMAGE_COUNT];
+	VkSampler samplers[MAX_SWAP_IMAGE_COUNT]; //who knows? we might need to sample the fbo
+	VkDeviceMemory mems[MAX_SWAP_IMAGE_COUNT];
+	VkFormat format;
 	u32 image_count;
 }FrameBufferAttachment;
+
+typedef struct FrameBufferObject
+{
+	u32 width, height; //should framebuffers be RESIZED when the swapchain resizes??????
+	VkFramebuffer framebuffers[MAX_SWAP_IMAGE_COUNT];
+	FrameBufferAttachment depth_attachment;
+	FrameBufferAttachment attachments[3]; //pos,color,normal?
+	u32 attachment_count;
+	VkRenderPass renderpass;
+}FrameBufferObject;
+
+global FrameBufferObject fbo1;
+
 
 typedef enum ShaderVarFormat{
   SHADER_VAR_FORMAT_UNDEFINED           =   0, // = VK_FORMAT_UNDEFINED
@@ -839,6 +855,7 @@ typedef struct Texture {
 } Texture;
 
 global Texture sample_texture;
+global Texture sample_texture2;
 
 global u32 current_frame = 0;
 global u32 framebuffer_resized = FALSE;
@@ -1198,7 +1215,7 @@ internal void vl_create_swapchain(void)
     u32 image_count = swapchain_support.capabilities.minImageCount + 1;
     if (swapchain_support.capabilities.maxImageCount > 0 && image_count > swapchain_support.capabilities.maxImageCount)
         image_count = swapchain_support.capabilities.maxImageCount;
-    
+    image_count = minimum(image_count, MAX_SWAP_IMAGE_COUNT);
     
     VkSwapchainCreateInfoKHR create_info = {0};
     create_info.sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR;
@@ -1317,7 +1334,7 @@ internal void vl_create_logical_device(void)
 
 
 
-internal VkDescriptorSet *create_descriptor_sets(VkDescriptorSetLayout layout, ShaderObject *vert,ShaderObject *frag, VkDescriptorPool pool, DataBuffer *uni_buffers, u32 set_count)
+internal VkDescriptorSet *create_descriptor_sets(VkDescriptorSetLayout layout, ShaderObject *vert,ShaderObject *frag, VkDescriptorPool pool, DataBuffer *uni_buffers,Texture *textures, u32 texture_count,  u32 set_count)
 {
     VkDescriptorSetLayout *layouts = (VkDescriptorSetLayout*)malloc(sizeof(VkDescriptorSetLayout)*set_count);
     for (u32 i = 0; i < set_count; ++i)
@@ -1337,11 +1354,15 @@ internal VkDescriptorSet *create_descriptor_sets(VkDescriptorSetLayout layout, S
         buffer_info.offset = 0;
         buffer_info.range = vert->info.descriptor_bindings[0].mem_size; //@check
 		
-		VkDescriptorImageInfo image_info = {0};
-		image_info.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-		image_info.sampler = sample_texture.sampler;
-		image_info.imageView = sample_texture.view;
-        
+		VkDescriptorImageInfo image_infos[4] = {0};
+		for (u32 t = 0; t < texture_count; ++t)
+		{
+			image_infos[t].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+			image_infos[t].sampler = textures[t].sampler;
+			image_infos[t].imageView = textures[t].view;
+        }
+		u32 global_image_index = 0; //gets incremented for every new image description we need ot write 
+		
         VkWriteDescriptorSet *descriptor_writes = NULL; //dynamic array, look tools.h
         u32 dw_count = 0;
 
@@ -1359,14 +1380,14 @@ internal VkDescriptorSet *create_descriptor_sets(VkDescriptorSetLayout layout, S
             if (vert->info.descriptor_bindings[i].desc_type == SHADER_DESC_TYPE_UNIFORM_BUFFER)
                 desc_write.pBufferInfo = &buffer_info;
             else
-                desc_write.pImageInfo = &image_info;
+                desc_write.pImageInfo = &image_infos[global_image_index++];
 			
 			buf_push(descriptor_writes, desc_write);
         }
         for (u32 i = 0; i < frag->info.descriptor_count; ++i)
         {
 			VkWriteDescriptorSet desc_write = {0};
-  if (frag->info.descriptor_bindings[i].binding == 0)continue; //@NOTE: this is to ignore default UBO description in fragment shader parsing
+			if (frag->info.descriptor_bindings[i].binding == 0)continue; //@NOTE: this is to ignore default UBO description in fragment shader parsing
        
 			
             desc_write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
@@ -1379,7 +1400,7 @@ internal VkDescriptorSet *create_descriptor_sets(VkDescriptorSetLayout layout, S
             if (frag->info.descriptor_bindings[i].desc_type == SHADER_DESC_TYPE_UNIFORM_BUFFER)
                 desc_write.pBufferInfo = &buffer_info;
             else
-                desc_write.pImageInfo = &image_info;
+                desc_write.pImageInfo = &image_infos[global_image_index++];
 			
 			buf_push(descriptor_writes, desc_write);
         }
@@ -1426,26 +1447,35 @@ internal void create_descriptor_pool(VkDescriptorPool *descriptor_pool,ShaderObj
 	buf_free(pool_size);
 }
 
-internal VkFormat find_depth_format(void);
-internal void vl_create_render_pass2(void)
+
+internal VkRenderPass create_render_pass(VkAttachmentLoadOp load_op,VkImageLayout initial, VkImageLayout final, u32 color_attachment_count, b32 depth_attachment_active)
 {
+#ifdef __cplusplus
+	VkRenderPass render_pass = {};
+#else
+	VkRenderPass render_pass = {0};
+#endif
+
     VkAttachmentDescription color_attachment = {0};
     color_attachment.format = vl.swap.image_format;
     color_attachment.samples = VK_SAMPLE_COUNT_1_BIT;
-    color_attachment.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD;
+    color_attachment.loadOp = load_op;
     color_attachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
     color_attachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
     color_attachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
-    color_attachment.initialLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
-    color_attachment.finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+    color_attachment.initialLayout = initial;
+    color_attachment.finalLayout = final;
     //color_attachment.finalLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
 	
+	VkAttachmentReference *attachment_refs = NULL;
 	
-    //each subpass references one or more attachments through our descriptions above
-    VkAttachmentReference color_attachment_ref = {0};
-    color_attachment_ref.attachment = 0;
-    color_attachment_ref.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-	
+	for (u32 i = 0; i < color_attachment_count; ++i)
+	{
+		VkAttachmentReference color_attachment_ref = {0};
+		color_attachment_ref.attachment = i;
+		color_attachment_ref.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+		buf_push(attachment_refs, color_attachment_ref);
+	}
 	
 	VkAttachmentDescription depth_attachment = {0};
 	depth_attachment.format = find_depth_format();
@@ -1460,14 +1490,15 @@ internal void vl_create_render_pass2(void)
 	VkAttachmentReference depth_attachment_ref = {0};
     depth_attachment_ref.attachment = 1;
     depth_attachment_ref.layout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
-	
+	buf_push(attachment_refs, depth_attachment_ref);
     
     VkSubpassDescription subpass = {0};
     subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
-    subpass.colorAttachmentCount = 1;
-    subpass.pColorAttachments = &color_attachment_ref;
+    subpass.colorAttachmentCount = color_attachment_count;
+    subpass.pColorAttachments = attachment_refs;
 	subpass.pDepthStencilAttachment = &depth_attachment_ref;
     
+	
 	VkAttachmentDescription attachments[2] = {color_attachment, depth_attachment};
 	
     VkRenderPassCreateInfo render_pass_info = {0};
@@ -1477,7 +1508,7 @@ internal void vl_create_render_pass2(void)
     render_pass_info.subpassCount = 1;
     render_pass_info.pSubpasses = &subpass;
     
-    /*
+    ///*
     VkSubpassDependency dependency = {0};
     dependency.srcSubpass = VK_SUBPASS_EXTERNAL;
     dependency.dstSubpass = 0;
@@ -1487,76 +1518,12 @@ internal void vl_create_render_pass2(void)
     dependency.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
     render_pass_info.dependencyCount = 1;
     render_pass_info.pDependencies = &dependency;
-    */
-    VK_CHECK(vkCreateRenderPass(vl.device, &render_pass_info, NULL, &vl.render_pass2));
-    
+    //*/
+    VK_CHECK(vkCreateRenderPass(vl.device, &render_pass_info, NULL, &render_pass));
+    return render_pass;
 }
 
 
-internal void vl_create_render_pass(void)
-{
-    VkAttachmentDescription color_attachment = {0};
-    color_attachment.format = vl.swap.image_format;
-    color_attachment.samples = VK_SAMPLE_COUNT_1_BIT;
-    color_attachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
-    color_attachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
-    color_attachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
-    color_attachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
-    color_attachment.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-    color_attachment.finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
-    //color_attachment.finalLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-	
-	
-    //each subpass references one or more attachments through our descriptions above
-    VkAttachmentReference color_attachment_ref = {0};
-    color_attachment_ref.attachment = 0;
-    color_attachment_ref.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
-	
-	
-	VkAttachmentDescription depth_attachment = {0};
-	depth_attachment.format = find_depth_format();
-	depth_attachment.samples = VK_SAMPLE_COUNT_1_BIT;
-	depth_attachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
-	depth_attachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
-	depth_attachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
-	depth_attachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
-	depth_attachment.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-	depth_attachment.finalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
-    
-	VkAttachmentReference depth_attachment_ref = {0};
-    depth_attachment_ref.attachment = 1;
-    depth_attachment_ref.layout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
-	
-    
-    VkSubpassDescription subpass = {0};
-    subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
-    subpass.colorAttachmentCount = 1;
-    subpass.pColorAttachments = &color_attachment_ref;
-	subpass.pDepthStencilAttachment = &depth_attachment_ref;
-    
-	VkAttachmentDescription attachments[2] = {color_attachment, depth_attachment};
-	
-    VkRenderPassCreateInfo render_pass_info = {0};
-    render_pass_info.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
-    render_pass_info.attachmentCount = array_count(attachments);
-    render_pass_info.pAttachments = attachments;
-    render_pass_info.subpassCount = 1;
-    render_pass_info.pSubpasses = &subpass;
-    
-    /*
-    VkSubpassDependency dependency = {0};
-    dependency.srcSubpass = VK_SUBPASS_EXTERNAL;
-    dependency.dstSubpass = 0;
-    dependency.srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT| VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT;
-    dependency.srcAccessMask = 0;
-    dependency.dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT| VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT;
-    dependency.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
-    render_pass_info.dependencyCount = 1;
-    render_pass_info.pDependencies = &dependency;
-    */
-    VK_CHECK(vkCreateRenderPass(vl.device, &render_pass_info, NULL, &vl.render_pass));
-    
-}
 
 internal void vl_create_framebuffers(void)
 {
@@ -1900,6 +1867,125 @@ internal VkFormat find_depth_format(void)
     
 }
 
+
+
+
+internal FrameBufferAttachment create_depth_attachment(u32 width, u32 height)
+{
+#ifdef __cplusplus
+	FrameBufferAttachment depth_attachment = {};
+#else
+	FrameBufferAttachment depth_attachment = {0};
+#endif
+	depth_attachment.image_count = 1; //we only need one image, because we don't present it, meaning its available each frame as new
+	depth_attachment.format = find_depth_format();
+	
+	create_image(width, height, 
+		depth_attachment.format, VK_IMAGE_TILING_OPTIMAL, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT, 
+		VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, &depth_attachment.images[0], &depth_attachment.mems[0]);
+	
+	depth_attachment.views[0] = create_image_view(depth_attachment.images[0], depth_attachment.format, VK_IMAGE_ASPECT_DEPTH_BIT);
+	//depth_attachment.samplers[0] = create_sampler();
+	return depth_attachment;
+}
+
+
+
+internal FrameBufferAttachment create_color_attachment(u32 width, u32 height, VkFormat format)
+{
+#ifdef __cplusplus
+	FrameBufferAttachment color_attachment = {};
+#else
+	FrameBufferAttachment color_attachment = {0};
+#endif
+	color_attachment.image_count = vl.swap.image_count;
+	color_attachment.format = format;
+	
+	for (u32 i = 0; i < color_attachment.image_count; ++i)
+	{
+		create_image(width, height, 
+		color_attachment.format, VK_IMAGE_TILING_OPTIMAL, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT, 
+		VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, &color_attachment.images[i], &color_attachment.mems[i]);
+		
+		color_attachment.views[i] = create_image_view(color_attachment.images[i], color_attachment.format, VK_IMAGE_ASPECT_COLOR_BIT);
+		//color_attachment.samplers[i] = create_sampler();
+	}
+	
+
+	return color_attachment;
+}
+
+
+/*
+typedef struct FrameBufferObject
+{
+	u32 width, height; //should framebuffers be RESIZED when the swapchain resizes??????
+	VkFramebuffer framebuffers[MAX_SWAP_IMAGE_COUNT];
+	FrameBufferAttachment attachments[3]; //pos,color,normal?
+	FrameBufferAttachment depth_attachment;
+	VkRenderPass renderpass;
+}FrameBufferObject;
+*/
+
+/*
+internal void vl_create_framebuffers(void)
+{
+    vl.swap.framebuffers = (VkFramebuffer*)malloc(sizeof(VkFramebuffer) * vl.swap.image_count); 
+    for (u32 i = 0; i < vl.swap.image_count; ++i)
+    {
+        VkImageView attachments[] = {vl.swap.image_views[i], vl.depth_image_view};
+        
+        VkFramebufferCreateInfo framebuffer_info = {0};
+        framebuffer_info.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
+        framebuffer_info.renderPass = vl.render_pass; //VkFramebuffers need a render pass?
+        framebuffer_info.attachmentCount = array_count(attachments);
+        framebuffer_info.pAttachments = attachments;
+        framebuffer_info.width = vl.swap.extent.width;
+        framebuffer_info.height = vl.swap.extent.height;
+        framebuffer_info.layers = 1;
+        
+        VK_CHECK(vkCreateFramebuffer(vl.device, &framebuffer_info, NULL, &vl.swap.framebuffers[i]));
+        
+    }
+    
+}
+*/
+
+internal void fbo_init(FrameBufferObject *fbo)
+{
+	return;return;return;return;
+	fbo->width = vl.swap.extent.width;
+	fbo->height = vl.swap.extent.height;
+	fbo->depth_attachment = create_depth_attachment(fbo->width, fbo->height);
+	fbo->attachments[0] = create_color_attachment(fbo->width, fbo->height, vl.swap.image_format);
+	fbo->attachment_count = 1;
+	VkRenderPass rp;
+	//now create the  framebuffers
+	for (u32 i=0;i <vl.swap.image_count; ++i)
+	{
+		VkImageView *attachments = NULL;
+		
+		for (u32 j = 0; j < fbo->attachment_count; ++j)
+			buf_push(attachments, fbo->attachments[j].views[i]);
+		buf_push(attachments, fbo->depth_attachment.views[0]);
+		
+		
+		VkFramebufferCreateInfo fbo_info = {0};
+		fbo_info.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
+		fbo_info.renderPass = rp;
+		fbo_info.attachmentCount = 2; //base case!
+		fbo_info.pAttachments = attachments;
+		fbo_info.width = vl.swap.extent.width;
+		fbo_info.height = vl.swap.extent.height;
+		fbo_info.layers = 1;
+		
+		VK_CHECK(vkCreateFramebuffer(vl.device, &fbo_info, NULL, &fbo->framebuffers[i]));
+		
+		buf_free(attachments);
+	}
+}
+
+
 internal void vl_create_depth_resources(void)
 {
 	VkFormat depth_format = find_depth_format();
@@ -2026,7 +2112,8 @@ internal void render_cube_immediate(VkCommandBuffer command_buf, u32 image_index
 {
     VkDescriptorSetLayout layout = shader_create_descriptor_set_layout(&p->vert_shader, &p->frag_shader, 1);
     DataBuffer *uniform_buffer = create_uniform_buffers(&p->vert_shader.info, 1);
-    VkDescriptorSet *desc_set = create_descriptor_sets(layout, &p->vert_shader,&p->frag_shader, p->descriptor_pools[image_index], uniform_buffer, 1);
+	Texture textures[] = {sample_texture, sample_texture2};
+    VkDescriptorSet *desc_set = create_descriptor_sets(layout, &p->vert_shader,&p->frag_shader, p->descriptor_pools[image_index], uniform_buffer,textures, array_count(textures),  1);
 
     DataBuffer *buf = ubo_manager_get_next_buf(image_index);
     if (buf == NULL)return;
@@ -2129,8 +2216,8 @@ internal void vl_recreate_swapchain(void)
     vl_cleanup_swapchain();
     vl_create_swapchain();
     vl_create_swapchain_image_views();
-    vl_create_render_pass();
-    vl_create_render_pass2();
+	vl.render_pass = create_render_pass(VK_ATTACHMENT_LOAD_OP_CLEAR,VK_IMAGE_LAYOUT_UNDEFINED,VK_IMAGE_LAYOUT_PRESENT_SRC_KHR, 1, TRUE);
+	vl.render_pass2 = create_render_pass(VK_ATTACHMENT_LOAD_OP_LOAD,VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,VK_IMAGE_LAYOUT_PRESENT_SRC_KHR, 1, TRUE);
     
     
 	vl_base_pipelines_init();
@@ -2225,8 +2312,8 @@ internal void vulkan_layer_init(void)
     vl_create_logical_device();
     vl_create_swapchain();
     vl_create_swapchain_image_views();
-	vl_create_render_pass();
-	vl_create_render_pass2();
+	vl.render_pass = create_render_pass(VK_ATTACHMENT_LOAD_OP_CLEAR,VK_IMAGE_LAYOUT_UNDEFINED,VK_IMAGE_LAYOUT_PRESENT_SRC_KHR, 1, TRUE);
+	vl.render_pass2 = create_render_pass(VK_ATTACHMENT_LOAD_OP_LOAD,VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,VK_IMAGE_LAYOUT_PRESENT_SRC_KHR, 1, TRUE);
 	vl_create_depth_resources();
 	vl_create_framebuffers();
     vl_create_command_pool();
@@ -2235,7 +2322,9 @@ internal void vulkan_layer_init(void)
 
 internal int vulkan_init(void) {
 	vulkan_layer_init();
+	fbo_init(&fbo1);
 	sample_texture = create_texture_image("../assets/test.png",VK_FORMAT_R8G8B8A8_SRGB);
+	sample_texture2 = create_texture_image("../assets/test.png",VK_FORMAT_R8G8B8A8_UNORM);
 	vl_base_pipelines_init();
     ubo_manager_init(110);
 	
