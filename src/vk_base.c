@@ -3,12 +3,23 @@
 #include "stdlib.h"
 #include "string.h"
 
-
-
+#define EXEC 1
+#ifdef EXEC
 #define NOGLFW 1
 #include "vkwin.h"
 Window wnd;
+#else
+#include "vk_base.h"
+extern int vk_getWidth();
+extern int vk_getHeight();
+extern HWND vk_getWindowSystemHandle();
+extern HINSTANCE vk_getWindowSystemInstance();
+void vk_error(char* text)
+{
+    printf("%s\n", text);
+}
 
+#endif
 
 
 #define STBI_NO_SIMD
@@ -17,10 +28,9 @@ Window wnd;
 
 #include "spirv_reflect.h"
 
-internal s32 window_w = 800;
-internal s32 window_h = 600;
+s32 window_w = 800;
+s32 window_h = 600;
 
-#define MAX_SWAP_IMAGE_COUNT 4
 
 #define VK_CHECK(x)                                                 \
 	do                                                              \
@@ -42,6 +52,10 @@ internal s32 window_h = 600;
 		}                                                           \
 	} while (0);
 	
+#ifdef EXEC
+
+#define MAX_SWAP_IMAGE_COUNT 4
+
 typedef struct Swapchain
 { 
 	VkSwapchainKHR swapchain;
@@ -76,7 +90,6 @@ typedef struct FrameBufferObject
 	VkRenderPass renderpass;
 }FrameBufferObject;
 
-global FrameBufferObject fbo1;
 
 
 typedef enum ShaderVarFormat{
@@ -190,8 +203,10 @@ typedef struct ShaderDescriptorBinding
     ShaderDescType desc_type; //ubo/image sampler etc..
 }ShaderDescriptorBinding;
 
+#endif
+
 //TODO: finish this or find another way to infer size of a shader variable
-internal u32 get_format_size(ShaderVarFormat format)
+u32 get_format_size(ShaderVarFormat format)
 {
     switch(format)
     {
@@ -232,7 +247,7 @@ typedef struct ShaderMetaInfo
 	u32 input_variable_count;
 }ShaderMetaInfo;
 
-internal u32 calc_vertex_input_total_size(ShaderMetaInfo *info)
+u32 calc_vertex_input_total_size(ShaderMetaInfo *info)
 {
     u32 s = 0;
     for (u32 i = 0; i < info->vertex_input_attribute_count; ++i)
@@ -240,7 +255,7 @@ internal u32 calc_vertex_input_total_size(ShaderMetaInfo *info)
     return s;
 }
 
-internal VkVertexInputBindingDescription get_bind_desc(ShaderMetaInfo *info)
+VkVertexInputBindingDescription get_bind_desc(ShaderMetaInfo *info)
 {
     VkVertexInputBindingDescription bind_desc = {0};
     bind_desc.binding = 0;
@@ -249,7 +264,7 @@ internal VkVertexInputBindingDescription get_bind_desc(ShaderMetaInfo *info)
     return bind_desc;
 }
 
-internal u32 get_attr_desc(VkVertexInputAttributeDescription *attr_desc, ShaderMetaInfo *info)
+u32 get_attr_desc(VkVertexInputAttributeDescription *attr_desc, ShaderMetaInfo *info)
 {
     u32 global_offset = 0;
     u32 valid_attribs = 0;
@@ -349,36 +364,35 @@ typedef struct VulkanLayer
 }VulkanLayer;
 
 
-global VulkanLayer vl;
-
+VulkanLayer vl;
 
 
 
 //attaches ALLOCATED memory block to buffer!
-internal void buf_bind(DataBuffer *buf, VkDeviceSize offset)
+void buf_bind(DataBuffer *buf, VkDeviceSize offset)
 {
 	vkBindBufferMemory(buf->device, buf->buffer, buf->mem, offset);
 }
 
-internal void buf_copy_to(DataBuffer *src,void *data, VkDeviceSize size)
+void buf_copy_to(DataBuffer *src,void *data, VkDeviceSize size)
 {
 	assert(src->mapped);
 	memcpy(src->mapped, data, size);
 }
 
-internal void buf_setup_descriptor(DataBuffer *buf, VkDeviceSize size, VkDeviceSize offset)
+void buf_setup_descriptor(DataBuffer *buf, VkDeviceSize size, VkDeviceSize offset)
 {
 	buf->desc.offset = offset;
 	buf->desc.buffer = buf->buffer;
 	buf->desc.range = size;
 }
 
-internal VkResult buf_map(DataBuffer *buf, VkDeviceSize size, VkDeviceSize offset)
+VkResult buf_map(DataBuffer *buf, VkDeviceSize size, VkDeviceSize offset)
 {
 	return vkMapMemory(buf->device, buf->mem, offset, size, 0, &buf->mapped);//@check @check @check @check
 }
 
-internal void buf_unmap(DataBuffer *buf)
+void buf_unmap(DataBuffer *buf)
 {
 	if (buf->mapped)
 	{
@@ -387,7 +401,7 @@ internal void buf_unmap(DataBuffer *buf)
 	}
 }
 
-internal void buf_destroy(DataBuffer *buf)
+void buf_destroy(DataBuffer *buf)
 {
     if (!buf->active)return;
 	if (buf->buffer)
@@ -416,7 +430,7 @@ typedef struct PipelineBuilder
 	VkPipelineLayout pipeline_layout;
 }PipelineBuilder;
 
-internal VkPipelineShaderStageCreateInfo 
+VkPipelineShaderStageCreateInfo 
 	pipe_shader_stage_create_info(VkShaderStageFlagBits stage, VkShaderModule shader_module)
 {
 	VkPipelineShaderStageCreateInfo info = {0};
@@ -429,7 +443,7 @@ internal VkPipelineShaderStageCreateInfo
 	return info;
 }
 
-internal VkPipelineVertexInputStateCreateInfo 
+VkPipelineVertexInputStateCreateInfo 
 pipe_vertex_input_state_create_info(ShaderObject *shader, VkVertexInputBindingDescription *bind_desc, VkVertexInputAttributeDescription *attr_desc)
 {
 
@@ -448,7 +462,7 @@ pipe_vertex_input_state_create_info(ShaderObject *shader, VkVertexInputBindingDe
 	return info;
 }
 
-internal VkPipelineInputAssemblyStateCreateInfo pipe_input_assembly_create_info(VkPrimitiveTopology topology)
+VkPipelineInputAssemblyStateCreateInfo pipe_input_assembly_create_info(VkPrimitiveTopology topology)
 {
 	VkPipelineInputAssemblyStateCreateInfo info = {0};
 	info.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
@@ -459,7 +473,7 @@ internal VkPipelineInputAssemblyStateCreateInfo pipe_input_assembly_create_info(
 	return info;
 }
 
-internal VkPipelineRasterizationStateCreateInfo pipe_rasterization_state_create_info(VkPolygonMode polygon_mode)
+VkPipelineRasterizationStateCreateInfo pipe_rasterization_state_create_info(VkPolygonMode polygon_mode)
 {
 	VkPipelineRasterizationStateCreateInfo info = {0};
 	info.sType= VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
@@ -481,7 +495,7 @@ internal VkPipelineRasterizationStateCreateInfo pipe_rasterization_state_create_
 }
 
 
-internal VkPipelineMultisampleStateCreateInfo pipe_multisampling_state_create_info(void)
+VkPipelineMultisampleStateCreateInfo pipe_multisampling_state_create_info(void)
 {
 	VkPipelineMultisampleStateCreateInfo info = {0};
 	info.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
@@ -495,7 +509,7 @@ internal VkPipelineMultisampleStateCreateInfo pipe_multisampling_state_create_in
 	return info;
 }
 
-internal VkPipelineColorBlendAttachmentState pipe_color_blend_attachment_state(void)
+VkPipelineColorBlendAttachmentState pipe_color_blend_attachment_state(void)
 {
 	VkPipelineColorBlendAttachmentState color_blend_attachment = {0};
 	color_blend_attachment.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
@@ -512,7 +526,7 @@ internal VkPipelineColorBlendAttachmentState pipe_color_blend_attachment_state(v
 }
 
 //this is retty much empty
-internal VkPipelineLayoutCreateInfo pipe_layout_create_info(VkDescriptorSetLayout *layouts, u32 layouts_count)
+VkPipelineLayoutCreateInfo pipe_layout_create_info(VkDescriptorSetLayout *layouts, u32 layouts_count)
 {
 	VkPipelineLayoutCreateInfo info = {0};
 	info.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
@@ -526,7 +540,7 @@ internal VkPipelineLayoutCreateInfo pipe_layout_create_info(VkDescriptorSetLayou
 	return info;
 }
 
-internal VkPipeline build_pipeline(VkDevice device, PipelineBuilder p,VkRenderPass render_pass)
+VkPipeline build_pipeline(VkDevice device, PipelineBuilder p,VkRenderPass render_pass)
 {
 	//------these are fixed-------
 	VkViewport viewport = {0};
@@ -608,7 +622,7 @@ internal VkPipeline build_pipeline(VkDevice device, PipelineBuilder p,VkRenderPa
 }
 
 
-internal VkShaderModule create_shader_module(char *code, u32 size)
+VkShaderModule create_shader_module(char *code, u32 size)
 {
 	VkShaderModuleCreateInfo create_info = {0};
 	create_info.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
@@ -620,7 +634,7 @@ internal VkShaderModule create_shader_module(char *code, u32 size)
 }
 
 
-internal VkDescriptorSetLayout shader_create_descriptor_set_layout(ShaderObject *vert, ShaderObject *frag, u32 set_count)
+VkDescriptorSetLayout shader_create_descriptor_set_layout(ShaderObject *vert, ShaderObject *frag, u32 set_count)
 {
     VkDescriptorSetLayout layout = {0};
 
@@ -662,7 +676,7 @@ internal VkDescriptorSetLayout shader_create_descriptor_set_layout(ShaderObject 
     return layout;
 }
 
-internal void shader_set_immediate(ShaderMetaInfo *info, const char *name, void *src, void *ubo_mem)
+void shader_set_immediate(ShaderMetaInfo *info, const char *name, void *src, void *ubo_mem)
 {
     u32 member_count = info->descriptor_bindings[0].member_count;
     for(u32 i = 0; i < member_count;++i)
@@ -679,7 +693,7 @@ internal void shader_set_immediate(ShaderMetaInfo *info, const char *name, void 
 } 
 
 
-internal void shader_copy_to_immediate(ShaderMetaInfo *info, DataBuffer *uniform_buffers, u32 image_index)
+void shader_copy_to_immediate(ShaderMetaInfo *info, DataBuffer *uniform_buffers, u32 image_index)
 {
 	void *data = info->descriptor_bindings[0].mem;
 	
@@ -690,7 +704,7 @@ internal void shader_copy_to_immediate(ShaderMetaInfo *info, DataBuffer *uniform
 
 
 
-internal void shader_reflect(u32 *shader_code, u32 code_size, ShaderMetaInfo *info)
+void shader_reflect(u32 *shader_code, u32 code_size, ShaderMetaInfo *info)
 {
 	// Generate reflection data for a shader
 	SpvReflectShaderModule module;
@@ -790,7 +804,7 @@ internal void shader_reflect(u32 *shader_code, u32 code_size, ShaderMetaInfo *in
 //one other option would be to use glslang BUT its a big dependency and I don't really need it.
 #define SHADER_DST_DIR "shaders/"
 #define SHADER_SRC_DIR "../assets/shaders/"
-internal void shader_create_dynamic(VkDevice device, ShaderObject *shader, const char *filename, VkShaderStageFlagBits stage)
+void shader_create_dynamic(VkDevice device, ShaderObject *shader, const char *filename, VkShaderStageFlagBits stage)
 {
     char command[256];
     char new_file[256];
@@ -811,7 +825,7 @@ internal void shader_create_dynamic(VkDevice device, ShaderObject *shader, const
 }  
 
 
-internal void shader_create(VkDevice device, ShaderObject *shader, const char *filename, VkShaderStageFlagBits stage)
+void shader_create(VkDevice device, ShaderObject *shader, const char *filename, VkShaderStageFlagBits stage)
 {
     char path[256];
     sprintf(path, "%s%s.spv", SHADER_DST_DIR, filename);
@@ -856,11 +870,11 @@ typedef struct Texture {
 		u32 mip_levels;
 } Texture;
 
-global Texture sample_texture;
-global Texture sample_texture2;
+Texture sample_texture;
+Texture sample_texture2;
 
-global u32 current_frame = 0;
-global u32 framebuffer_resized = FALSE;
+u32 current_frame = 0;
+u32 framebuffer_resized = FALSE;
 
 const char *validation_layers[]= {
     "VK_LAYER_KHRONOS_validation"
@@ -889,7 +903,7 @@ typedef struct Vertex
 	vec2 tex_coord;
 }Vertex;
 		
-internal vec3 cube_positions[]  = {
+vec3 cube_positions[]  = {
 	{0.5f, 0.5f, 0.5f},  {-0.5f, 0.5f, 0.5f},  {-0.5f,-0.5f, 0.5f}, {0.5f,-0.5f, 0.5f},   // v0,v1,v2,v3 (front)
     {0.5f, 0.5f, 0.5f},  {0.5f,-0.5f, 0.5f},   {0.5f,-0.5f,-0.5f},  {0.5f, 0.5f,-0.5f},   // v0,v3,v4,v5 (right)
     {0.5f, 0.5f, 0.5f},  {0.5f, 0.5f,-0.5f},   {-0.5f, 0.5f,-0.5f}, {-0.5f, 0.5f, 0.5f},   // v0,v5,v6,v1 (top)
@@ -899,7 +913,7 @@ internal vec3 cube_positions[]  = {
 };
 
 // normal array
-internal vec3 cube_normals[] = {
+vec3 cube_normals[] = {
 	{0, 0, 1},   {0, 0, 1},   {0, 0, 1},   {0, 0, 1},  // v0,v1,v2,v3 (front)
 	{1, 0, 0},   {1, 0, 0},   {1, 0, 0},   {1, 0, 0},  // v0,v3,v4,v5 (right)
 	{0, 1, 0},   {0, 1, 0},   {0, 1, 0},   {0, 1, 0},  // v0,v5,v6,v1 (top)
@@ -909,7 +923,7 @@ internal vec3 cube_normals[] = {
 };
 
 // texCoord array
-internal vec2 cube_tex_coords[] = {
+vec2 cube_tex_coords[] = {
     {1, 0},   {0, 0},   {0, 1},   {1, 1},               // v0,v1,v2,v3 (front)
 	{0, 0},   {0, 1},   {1, 1},   {1, 0},               // v0,v3,v4,v5 (right)
 	{1, 1},   {1, 0},   {0, 0},   {0, 1},               // v0,v5,v6,v1 (top)
@@ -918,7 +932,7 @@ internal vec2 cube_tex_coords[] = {
 	{0, 1},   {1, 1},   {1, 0},   {0, 0}                // v4,v7,v6,v5 (back)
 };
 
-internal u32 cube_indices[] = {
+u32 cube_indices[] = {
      0, 1, 2,   2, 3, 0,    // v0-v1-v2, v2-v3-v0 (front)
      4, 5, 6,   6, 7, 4,    // v0-v3-v4, v4-v5-v0 (right)
      8, 9,10,  10,11, 8,    // v0-v5-v6, v6-v1-v0 (top)
@@ -926,7 +940,7 @@ internal u32 cube_indices[] = {
     16,17,18,  18,19,16,    // v7-v4-v3, v3-v2-v7 (bottom)
     20,21,22,  22,23,20     // v4-v7-v6, v6-v5-v4 (back)
 };
-internal Vertex *cube_build_verts(void)
+Vertex *cube_build_verts(void)
 {
 	Vertex *verts = (Vertex*)malloc(sizeof(Vertex) * 24);
 	for (u32 i =0; i < 24; ++i)
@@ -940,7 +954,7 @@ internal Vertex *cube_build_verts(void)
 
 
 //return the binding description of Vertex type vertex input
-internal VkVertexInputBindingDescription get_bind_desc_test_vert(void)
+VkVertexInputBindingDescription get_bind_desc_test_vert(void)
 {
     VkVertexInputBindingDescription bind_desc = {0};
     bind_desc.binding = 0;
@@ -949,7 +963,7 @@ internal VkVertexInputBindingDescription get_bind_desc_test_vert(void)
     return bind_desc;
 }
 
-internal void get_attr_desc_test_vert(VkVertexInputAttributeDescription *attr_desc)
+void get_attr_desc_test_vert(VkVertexInputAttributeDescription *attr_desc)
 {
     attr_desc[0].binding = 0;
     attr_desc[0].location = 0;
@@ -975,7 +989,7 @@ typedef struct SwapChainSupportDetails
 }SwapChainSupportDetails;
 
 
-internal SwapChainSupportDetails query_swapchain_support(VkPhysicalDevice device)
+SwapChainSupportDetails query_swapchain_support(VkPhysicalDevice device)
 {
     SwapChainSupportDetails details = {0};
     
@@ -1007,7 +1021,7 @@ internal SwapChainSupportDetails query_swapchain_support(VkPhysicalDevice device
     return details;
 }
 
-internal u32 check_validation_layer_support(void){
+u32 check_validation_layer_support(void){
 	u32 layer_count;
 	vkEnumerateInstanceLayerProperties(&layer_count, NULL);
     
@@ -1030,7 +1044,7 @@ internal u32 check_validation_layer_support(void){
 	return TRUE;
 }
 
-internal void vl_create_instance(void) {
+void vl_create_instance(void) {
 	if (enable_validation_layers&&(check_validation_layer_support()==0))
 		vk_error("Validation layers requested, but not available!");
 	VkApplicationInfo appinfo = {0};
@@ -1085,7 +1099,7 @@ typedef struct QueueFamilyIndices
     u32 present_family_found;
 }QueueFamilyIndices;
 
-internal QueueFamilyIndices find_queue_families(VkPhysicalDevice device)
+QueueFamilyIndices find_queue_families(VkPhysicalDevice device)
 { 
     QueueFamilyIndices indices;
     
@@ -1110,7 +1124,7 @@ internal QueueFamilyIndices find_queue_families(VkPhysicalDevice device)
     return indices;
 }
 
-internal u32 check_device_extension_support(VkPhysicalDevice device)
+u32 check_device_extension_support(VkPhysicalDevice device)
 {
     u32 ext_count;
     vkEnumerateDeviceExtensionProperties(device, NULL, &ext_count, NULL);
@@ -1133,7 +1147,7 @@ internal u32 check_device_extension_support(VkPhysicalDevice device)
     return TRUE;
 }
 
-internal u32 is_device_suitable(VkPhysicalDevice device)
+u32 is_device_suitable(VkPhysicalDevice device)
 {
     QueueFamilyIndices indices = find_queue_families(device);
     
@@ -1151,7 +1165,7 @@ internal u32 is_device_suitable(VkPhysicalDevice device)
     (swapchain_support.format_count > 0) && (swapchain_support.present_mode_count > 0);
 }
 
-internal void vl_pick_physical_device(void) {
+void vl_pick_physical_device(void) {
     u32 device_count = 0;
     vkEnumeratePhysicalDevices(vl.instance, &device_count, NULL);
     if (device_count == 0)
@@ -1168,7 +1182,7 @@ internal void vl_pick_physical_device(void) {
     free(devices);
 }
 
-internal VkSurfaceFormatKHR choose_swap_surface_format(SwapChainSupportDetails details)
+VkSurfaceFormatKHR choose_swap_surface_format(SwapChainSupportDetails details)
 {
     for (u32 i = 0; i < details.format_count; ++i)
     {
@@ -1180,13 +1194,13 @@ internal VkSurfaceFormatKHR choose_swap_surface_format(SwapChainSupportDetails d
     }
     return details.formats[0];
 }
-internal VkPresentModeKHR choose_swap_present_mode(SwapChainSupportDetails details)
+VkPresentModeKHR choose_swap_present_mode(SwapChainSupportDetails details)
 {
     return VK_PRESENT_MODE_FIFO_KHR;
     //return VK_PRESENT_MODE_IMMEDIATE_KHR;
 }
 
-internal VkExtent2D choose_swap_extent(SwapChainSupportDetails details)
+VkExtent2D choose_swap_extent(SwapChainSupportDetails details)
 {
     if (details.capabilities.currentExtent.width != UINT32_MAX)
     {
@@ -1195,8 +1209,12 @@ internal VkExtent2D choose_swap_extent(SwapChainSupportDetails details)
     else
     {
         u32 width, height;
-
+#ifdef EXEC
 		window_get_framebuffer_size(&wnd, &width, &height);
+#else
+        width = vk_getHeight();
+        width = vk_getWidth();
+#endif
         VkExtent2D actual_extent = {width, height};
         actual_extent.height=maximum(details.capabilities.maxImageExtent.height,
                                      minimum(details.capabilities.minImageExtent.height,actual_extent.height));
@@ -1206,7 +1224,7 @@ internal VkExtent2D choose_swap_extent(SwapChainSupportDetails details)
     }
 }
 
-internal void vl_create_swapchain(void)
+void vl_create_swapchain(void)
 {
     SwapChainSupportDetails swapchain_support = query_swapchain_support(vl.physical_device);
     
@@ -1263,7 +1281,7 @@ internal void vl_create_swapchain(void)
     //printf("new swapchain size: %i\n", image_count);
 }
 
-internal VkImageView create_image_view(VkImage image, VkFormat format,  VkImageAspectFlags aspect_flags)
+VkImageView create_image_view(VkImage image, VkFormat format,  VkImageAspectFlags aspect_flags)
 {
 	VkImageView image_view;
 	
@@ -1281,7 +1299,7 @@ internal VkImageView create_image_view(VkImage image, VkFormat format,  VkImageA
 	return image_view;
 }
 
-internal void vl_create_swapchain_image_views(void)
+void vl_create_swapchain_image_views(void)
 {
     vl.swap.image_views = (VkImageView*)malloc(sizeof(VkImageView) * vl.swap.image_count);
     for (u32 i = 0; i < vl.swap.image_count; ++i)
@@ -1289,7 +1307,7 @@ internal void vl_create_swapchain_image_views(void)
 }
 
 //Queue initialization is a little weird,TODO(ilias): fix when possible
-internal void vl_create_logical_device(void)
+void vl_create_logical_device(void)
 {
     QueueFamilyIndices indices = find_queue_families(vl.physical_device);
     
@@ -1336,7 +1354,7 @@ internal void vl_create_logical_device(void)
 
 
 
-internal VkDescriptorSet *create_descriptor_sets(VkDescriptorSetLayout layout, ShaderObject *vert,ShaderObject *frag, VkDescriptorPool pool, DataBuffer *uni_buffers,Texture *textures, u32 texture_count,  u32 set_count)
+VkDescriptorSet *create_descriptor_sets(VkDescriptorSetLayout layout, ShaderObject *vert,ShaderObject *frag, VkDescriptorPool pool, DataBuffer *uni_buffers,Texture *textures, u32 texture_count,  u32 set_count)
 {
     VkDescriptorSetLayout *layouts = (VkDescriptorSetLayout*)malloc(sizeof(VkDescriptorSetLayout)*set_count);
     for (u32 i = 0; i < set_count; ++i)
@@ -1416,7 +1434,7 @@ internal VkDescriptorSet *create_descriptor_sets(VkDescriptorSetLayout layout, S
 
 
 
-internal void create_descriptor_pool(VkDescriptorPool *descriptor_pool,ShaderObject *vert, ShaderObject *frag)
+void create_descriptor_pool(VkDescriptorPool *descriptor_pool,ShaderObject *vert, ShaderObject *frag)
 {
     VkDescriptorPoolSize *pool_size = NULL;
 	VkDescriptorPoolSize ps = {0};//dummy
@@ -1449,8 +1467,8 @@ internal void create_descriptor_pool(VkDescriptorPool *descriptor_pool,ShaderObj
 	buf_free(pool_size);
 }
 
-
-internal VkRenderPass create_render_pass(VkAttachmentLoadOp load_op,VkImageLayout initial, VkImageLayout final, u32 color_attachment_count, b32 depth_attachment_active)
+VkFormat find_depth_format(void);
+VkRenderPass create_render_pass(VkAttachmentLoadOp load_op,VkImageLayout initial, VkImageLayout final, u32 color_attachment_count, b32 depth_attachment_active)
 {
 #ifdef __cplusplus
 	VkRenderPass render_pass = {};
@@ -1535,7 +1553,7 @@ internal VkRenderPass create_render_pass(VkAttachmentLoadOp load_op,VkImageLayou
 
 
 
-internal void vl_create_framebuffers(void)
+void vl_create_framebuffers(void)
 {
     vl.swap.framebuffers = (VkFramebuffer*)malloc(sizeof(VkFramebuffer) * vl.swap.image_count); 
     for (u32 i = 0; i < vl.swap.image_count; ++i)
@@ -1557,7 +1575,7 @@ internal void vl_create_framebuffers(void)
     
 }
 
-internal VkFormat find_supported_format(VkFormat *candidates, VkImageTiling tiling, VkFormatFeatureFlags features, u32 candidates_count)
+VkFormat find_supported_format(VkFormat *candidates, VkImageTiling tiling, VkFormatFeatureFlags features, u32 candidates_count)
 {
 	for (u32 i = 0; i < candidates_count; ++i)
 	{
@@ -1576,7 +1594,7 @@ internal VkFormat find_supported_format(VkFormat *candidates, VkImageTiling tili
 }
 
 
-internal void vl_create_command_pool(void)
+void vl_create_command_pool(void)
 {
     QueueFamilyIndices queue_family_indices = find_queue_families(vl.physical_device);
     VkCommandPoolCreateInfo pool_info = {0};
@@ -1586,14 +1604,14 @@ internal void vl_create_command_pool(void)
     VK_CHECK(vkCreateCommandPool(vl.device, &pool_info, NULL, &vl.command_pool));
 }
 
-internal void render_fullscreen(VkCommandBuffer command_buf, u32 image_index)
+void render_fullscreen(VkCommandBuffer command_buf, u32 image_index)
 {    
 	vkCmdBindPipeline(command_buf, VK_PIPELINE_BIND_POINT_GRAPHICS, vl.fullscreen_pipe.pipeline);
 	
     vkCmdDraw(command_buf, 4, 1, 0, 0);
 }
 
-internal void vl_create_command_buffers(void)
+void vl_create_command_buffers(void)
 {
     vl.command_buffers = (VkCommandBuffer*)malloc(sizeof(VkCommandBuffer) * vl.swap.image_count);
     VkCommandBufferAllocateInfo alloc_info = {0};
@@ -1605,7 +1623,7 @@ internal void vl_create_command_buffers(void)
 }
 
 #define TYPE_OK(TYPE_FILTER, FILTER_INDEX) (TYPE_FILTER & (1 << FILTER_INDEX)) 
-internal u32 find_mem_type(u32 type_filter, VkMemoryPropertyFlags properties)
+u32 find_mem_type(u32 type_filter, VkMemoryPropertyFlags properties)
 {
     VkPhysicalDeviceMemoryProperties mem_properties;
     vkGetPhysicalDeviceMemoryProperties(vl.physical_device, &mem_properties);
@@ -1618,7 +1636,7 @@ internal u32 find_mem_type(u32 type_filter, VkMemoryPropertyFlags properties)
     vk_error("Failed to find suitable memory type!");
 }
 
-internal void create_buffer_simple(u32 buffer_size,VkBufferUsageFlagBits usage, VkMemoryPropertyFlagBits mem_flags, VkBuffer *buf, VkDeviceMemory *mem)
+void create_buffer_simple(u32 buffer_size,VkBufferUsageFlagBits usage, VkMemoryPropertyFlagBits mem_flags, VkBuffer *buf, VkDeviceMemory *mem)
 {
     VkBufferCreateInfo buffer_info = {0};
     buffer_info.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
@@ -1639,7 +1657,7 @@ internal void create_buffer_simple(u32 buffer_size,VkBufferUsageFlagBits usage, 
 }
 
 
-internal void create_buffer(VkBufferUsageFlagBits usage, VkMemoryPropertyFlagBits mem_flags, DataBuffer *buf, VkDeviceSize size, void *data)
+void create_buffer(VkBufferUsageFlagBits usage, VkMemoryPropertyFlagBits mem_flags, DataBuffer *buf, VkDeviceSize size, void *data)
 {
 	buf->device = vl.device;
     buf->active = TRUE;
@@ -1683,7 +1701,7 @@ internal void create_buffer(VkBufferUsageFlagBits usage, VkMemoryPropertyFlagBit
     vkBindBufferMemory(vl.device, (buf->buffer), (buf->mem), 0);
 }
 
-internal void create_image(u32 width, u32 height, VkFormat format, VkImageTiling tiling, 
+void create_image(u32 width, u32 height, VkFormat format, VkImageTiling tiling, 
 VkImageUsageFlags usage, VkMemoryPropertyFlags properties, VkImage *image, VkDeviceMemory *image_memory)
 {
 	VkImageCreateInfo image_info = {0};
@@ -1716,7 +1734,7 @@ VkImageUsageFlags usage, VkMemoryPropertyFlags properties, VkImage *image, VkDev
 
 
 
-internal VkCommandBuffer begin_single_time_commands(void)
+VkCommandBuffer begin_single_time_commands(void)
 {
 	VkCommandBufferAllocateInfo alloc_info = {0};
 	alloc_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
@@ -1734,7 +1752,7 @@ internal VkCommandBuffer begin_single_time_commands(void)
 	
 	return command_buffer;
 }
-internal void end_single_time_commands(VkCommandBuffer command_buffer)
+void end_single_time_commands(VkCommandBuffer command_buffer)
 {
 	vkEndCommandBuffer(command_buffer);
 	
@@ -1749,7 +1767,7 @@ internal void end_single_time_commands(VkCommandBuffer command_buffer)
 }
 
 //compies from one VkBuffer to another
-internal void copy_buffer(VkBuffer src_buf, VkBuffer dst_buf, VkDeviceSize size)
+void copy_buffer(VkBuffer src_buf, VkBuffer dst_buf, VkDeviceSize size)
 {
 	VkCommandBuffer command_buf = begin_single_time_commands();
 	
@@ -1760,7 +1778,7 @@ internal void copy_buffer(VkBuffer src_buf, VkBuffer dst_buf, VkDeviceSize size)
 	end_single_time_commands(command_buf);
 }
 
-internal void transition_image_layout(VkImage image, VkFormat format, VkImageLayout old_layout, VkImageLayout new_layout)
+void transition_image_layout(VkImage image, VkFormat format, VkImageLayout old_layout, VkImageLayout new_layout)
 {
 	VkCommandBuffer command_buf = begin_single_time_commands();
 	
@@ -1820,7 +1838,7 @@ internal void transition_image_layout(VkImage image, VkFormat format, VkImageLay
 	end_single_time_commands(command_buf);
 }
 
-internal void copy_buffer_to_image(VkBuffer buffer, VkImage image, u32 width, u32 height) {
+void copy_buffer_to_image(VkBuffer buffer, VkImage image, u32 width, u32 height) {
     VkCommandBuffer command_buf = begin_single_time_commands();
 	
 	VkBufferImageCopy region = {0};
@@ -1926,44 +1944,8 @@ internal FrameBufferAttachment create_color_attachment(u32 width, u32 height, Vk
 }
 
 
-/*
-typedef struct FrameBufferObject
-{
-	u32 width, height; //should framebuffers be RESIZED when the swapchain resizes??????
-	VkFramebuffer framebuffers[MAX_SWAP_IMAGE_COUNT];
-	FrameBufferAttachment attachments[3]; //pos,color,normal?
-	FrameBufferAttachment depth_attachment;
-	VkRenderPass renderpass;
-}FrameBufferObject;
-*/
-
-/*
-internal void vl_create_framebuffers(void)
-{
-    vl.swap.framebuffers = (VkFramebuffer*)malloc(sizeof(VkFramebuffer) * vl.swap.image_count); 
-    for (u32 i = 0; i < vl.swap.image_count; ++i)
-    {
-        VkImageView attachments[] = {vl.swap.image_views[i], vl.depth_image_view};
-        
-        VkFramebufferCreateInfo framebuffer_info = {0};
-        framebuffer_info.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
-        framebuffer_info.renderPass = vl.render_pass; //VkFramebuffers need a render pass?
-        framebuffer_info.attachmentCount = array_count(attachments);
-        framebuffer_info.pAttachments = attachments;
-        framebuffer_info.width = vl.swap.extent.width;
-        framebuffer_info.height = vl.swap.extent.height;
-        framebuffer_info.layers = 1;
-        
-        VK_CHECK(vkCreateFramebuffer(vl.device, &framebuffer_info, NULL, &vl.swap.framebuffers[i]));
-        
-    }
-    
-}
-*/
-
 internal void fbo_init(FrameBufferObject *fbo)
 {
-	return;return;return;return;
 	fbo->width = vl.swap.extent.width;
 	fbo->height = vl.swap.extent.height;
 	fbo->depth_attachment = create_depth_attachment(fbo->width, fbo->height);
@@ -1982,7 +1964,7 @@ internal void fbo_init(FrameBufferObject *fbo)
 		
 		VkFramebufferCreateInfo fbo_info = {0};
 		fbo_info.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
-		fbo_info.renderPass = rp;
+        fbo_info.renderPass = rp;
 		fbo_info.attachmentCount = 2; //base case!
 		fbo_info.pAttachments = attachments;
 		fbo_info.width = vl.swap.extent.width;
@@ -2087,7 +2069,7 @@ typedef struct UniformBufferManager
     u32 swap_image_count; 
     u32 buffers_per_swap_image;
 }UniformBufferManager;
-global UniformBufferManager ubo_manager;
+UniformBufferManager ubo_manager;
 
 internal void ubo_manager_init(u32 buffer_count)
 {
@@ -2149,7 +2131,7 @@ internal void render_cube_immediate(VkCommandBuffer command_buf, u32 image_index
     shader_set_immediate(&p->vert_shader.info, "view", view.elements, data);
     mat4 proj = perspective_proj_vk(45.0f,window_w/(f32)window_h, 0.1, 10);
     shader_set_immediate(&p->vert_shader.info, "proj", proj.elements, data);
-    f32 color_modifier = 10.0f * fabs(sin(get_time()));
+    f32 color_modifier = 1.0f;
     shader_set_immediate(&p->vert_shader.info, "modifier", &color_modifier, data);
 
 	
@@ -2195,7 +2177,15 @@ internal void create_sync_objects(void)
 
 internal void create_surface(void)
 {
+#ifdef EXEC
 	window_create_window_surface(vl.instance, &wnd, &vl.surface);
+#else
+    VkWin32SurfaceCreateInfoKHR surface_create_info =
+    { VK_STRUCTURE_TYPE_WIN32_SURFACE_CREATE_INFO_KHR,NULL,0,vk_getWindowSystemInstance(),vk_getWindowSystemHandle() };
+
+    if (vkCreateWin32SurfaceKHR(vl.instance, &surface_create_info, NULL, &vl.surface) != VK_SUCCESS)
+        vk_error("Failed to create win32 window surface!");
+#endif
 }
 
 internal void framebuffer_resize_callback(void){framebuffer_resized = TRUE;}
@@ -2218,8 +2208,12 @@ internal void vl_recreate_swapchain(void)
 {
     //in case of window minimization (w = 0, h = 0) we wait until we get a proper window again
     u32 width = 0, height = 0;
+#ifdef EXEC
 	window_get_framebuffer_size(&wnd, &width, &height);
-    
+#else
+    width = vk_getWidth();
+    height = vk_getHeight();
+#endif
     
     vkDeviceWaitIdle(vl.device);
     
@@ -2330,11 +2324,16 @@ internal void vulkan_layer_init(void)
 	
 }
 
-internal int vulkan_init(void) {
+FrameBufferObject fbo1;
+
+int vulkan_init(void) {
 	vulkan_layer_init();
-	fbo_init(&fbo1);
-	sample_texture = create_texture_image("../assets/test.png",VK_FORMAT_R8G8B8A8_SRGB);
+	//fbo_init(&fbo1);
+#ifdef EXEC
+    sample_texture = create_texture_image("../assets/test.png",VK_FORMAT_R8G8B8A8_SRGB);
 	sample_texture2 = create_texture_image("../assets/test.png",VK_FORMAT_R8G8B8A8_UNORM);
+#endif
+
 	vl_base_pipelines_init();
     ubo_manager_init(110);
 	
@@ -2352,7 +2351,7 @@ internal int vulkan_init(void) {
 	create_buffer(VK_BUFFER_USAGE_INDEX_BUFFER_BIT, 
 	(VkMemoryPropertyFlagBits)(VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT), 
 	&index_buffer_real, sizeof(cube_indices[0]) * array_count(cube_indices), cube_indices);
-	
+
 	
 
     
@@ -2426,13 +2425,13 @@ internal void draw_frame(void)
     renderpass_info.pClearValues = clear_values;
 
     vkCmdBeginRenderPass(vl.command_buffers[image_index], &renderpass_info, VK_SUBPASS_CONTENTS_INLINE);
-    mat4 m = mat4_mul(mat4_translate(v3(1.2,0,-4)),mat4_rotate( 360.0f * sin(get_time()) ,v3(0.2,0.4,0.7)));
+    mat4 m = mat4_mul(mat4_translate(v3(1.2,0,-4)),m4d(1.f));
     render_cube_immediate(vl.command_buffers[image_index], image_index, &vl.base_pipe, m);
 	render_fullscreen(vl.command_buffers[image_index], image_index);
 	vkCmdEndRenderPass(vl.command_buffers[image_index]);
 
     vkCmdBeginRenderPass(vl.command_buffers[image_index], &renderpass_info, VK_SUBPASS_CONTENTS_INLINE);
-    m = mat4_mul(mat4_translate(v3(-1.2,0,-4)),mat4_rotate( 360.0f * sin(get_time()) ,v3(-0.2,-0.4,-0.7)));
+    m = mat4_mul(mat4_translate(v3(-1.2,0,-6)), m4d(1.f));
     render_cube_immediate(vl.command_buffers[image_index], image_index, &vl.base_pipe, m);
 	vkCmdEndRenderPass(vl.command_buffers[image_index]);
 	
@@ -2484,9 +2483,106 @@ internal void draw_frame(void)
     current_frame = (current_frame+1) % MAX_FRAMES_IN_FLIGHT;
 }
 
-global f32 nb_frames = 0.0f;
-global f32 current_time = 0.0f;
-global f32 prev_time = 0.0f;
+void draw_frame_minimal(void)
+{
+
+    vkWaitForFences(vl.device, 1, &in_flight_fences[current_frame], VK_TRUE, UINT64_MAX);
+    //[0]: Acquire free image from the swapchain
+    u32 image_index;
+    VkResult res = vkAcquireNextImageKHR(vl.device, vl.swap.swapchain, UINT64_MAX,
+        image_available_semaphores[current_frame], VK_NULL_HANDLE, &image_index);
+    if (res == VK_ERROR_OUT_OF_DATE_KHR) { vl_recreate_swapchain(); return; }
+    else if (res != VK_SUCCESS && res != VK_SUBOPTIMAL_KHR)vk_error("Failed to acquire swapchain image!");
+
+    // check if the image is already used (in flight) froma previous frame, and if so wait
+    if (images_in_flight[image_index] != VK_NULL_HANDLE)vkWaitForFences(vl.device, 1, &images_in_flight[image_index], VK_TRUE, UINT64_MAX);
+
+
+    
+    VK_CHECK(vkResetCommandBuffer(vl.command_buffers[image_index], VK_COMMAND_BUFFER_RESET_RELEASE_RESOURCES_BIT));
+    //----BEGIN RENDER PASS----
+    VkCommandBufferBeginInfo begin_info = { 0 };
+    begin_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+    begin_info.flags = 0;
+    begin_info.pInheritanceInfo = NULL;
+    VK_CHECK(vkBeginCommandBuffer(vl.command_buffers[image_index], &begin_info));
+
+    VkRenderPassBeginInfo renderpass_info = { 0 };
+    renderpass_info.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+    renderpass_info.renderPass = vl.render_pass;
+    renderpass_info.framebuffer = vl.swap.framebuffers[image_index]; //we bind a _framebuffer_ to a render pass
+    renderpass_info.renderArea.offset.x = 0;
+    renderpass_info.renderArea.offset.y = 0;
+    renderpass_info.renderArea.extent = vl.swap.extent;
+    VkClearValue clear_values[2] = { 0 };
+#ifdef __cplusplus
+    clear_values[0].color = { {0.2f, 0.2f, 0.2f, 1.0f} };
+    clear_values[1].depthStencil = { 1.0f, 0 };
+#else
+    clear_values[0].color = (VkClearColorValue){ {0.0f, 0.0f, 0.0f, 1.0f} };
+    clear_values[1].depthStencil = (VkClearDepthStencilValue){ 1.0f, 0 };
+#endif
+
+    renderpass_info.clearValueCount = array_count(clear_values);
+    renderpass_info.pClearValues = clear_values;
+
+    vkCmdBeginRenderPass(vl.command_buffers[image_index], &renderpass_info, VK_SUBPASS_CONTENTS_INLINE);
+    vkCmdEndRenderPass(vl.command_buffers[image_index]);
+
+    //render_fullscreen(vl.command_buffers[image_index], image_index);
+
+    VK_CHECK(vkEndCommandBuffer(vl.command_buffers[image_index]));
+
+    //mark image as used by _this frame_
+    images_in_flight[image_index] = in_flight_fences[current_frame];
+
+    //[1]: Execute the command buffer with that image as attachment in the framebuffer
+    VkSubmitInfo submit_info = { 0 };
+    submit_info.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+    VkSemaphore wait_semaphores[] = { image_available_semaphores[current_frame] };
+    VkPipelineStageFlags wait_stages[] = { VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT };
+    submit_info.waitSemaphoreCount = 1;
+    submit_info.pWaitSemaphores = wait_semaphores;
+    submit_info.pWaitDstStageMask = wait_stages;
+    submit_info.commandBufferCount = 1;
+    submit_info.pCommandBuffers = &vl.command_buffers[image_index];
+    VkSemaphore signal_semaphores[] = { render_finished_semaphores[current_frame] };
+    submit_info.signalSemaphoreCount = 1;
+    submit_info.pSignalSemaphores = signal_semaphores;
+    vkResetFences(vl.device, 1, &in_flight_fences[current_frame]);
+    VK_CHECK(vkQueueSubmit(vl.graphics_queue, 1, &submit_info, in_flight_fences[current_frame]));
+    //[2]: Return the image to the swapchain for presentation
+    VkPresentInfoKHR present_info = { 0 };
+    present_info.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
+    present_info.waitSemaphoreCount = 1;
+    present_info.pWaitSemaphores = signal_semaphores;
+
+    VkSwapchainKHR swapchains[] = { vl.swap.swapchain };
+    present_info.swapchainCount = 1;
+    present_info.pSwapchains = swapchains;
+    present_info.pImageIndices = &image_index;
+    present_info.pResults = NULL;
+
+    //we push the data to be presented to the present queue
+    res = vkQueuePresentKHR(vl.present_queue, &present_info);
+
+    //recreate swapchain if necessary
+    if (res == VK_ERROR_OUT_OF_DATE_KHR || res == VK_SUBOPTIMAL_KHR || framebuffer_resized)
+    {
+        framebuffer_resized = FALSE;
+        vl_recreate_swapchain();
+    }
+    else if (res != VK_SUCCESS)
+        vk_error("Failed to present swapchain image!");
+
+    current_frame = (current_frame + 1) % MAX_FRAMES_IN_FLIGHT;
+}
+
+#ifdef EXEC
+
+f32 nb_frames = 0.0f;
+f32 current_time = 0.0f;
+f32 prev_time = 0.0f;
 internal void calc_fps(void)
 {
     f32 current_time = get_time();
@@ -2501,7 +2597,7 @@ internal void calc_fps(void)
         prev_time = current_time;
     }
 }
-internal void main_loop(void) 
+internal void main_loop(void)
 {
     
 	while (!window_should_close(&wnd)) {
@@ -2512,8 +2608,10 @@ internal void main_loop(void)
     
     //vkDeviceWaitIdle(device);
 }
+#endif
 
-internal void cleanup(void) 
+
+internal void cleanup(void)
 {
     vkDeviceWaitIdle(vl.device);  //so we dont close the window while commands are still being executed
     vl_cleanup_swapchain();
@@ -2533,7 +2631,7 @@ internal void cleanup(void)
     vkDestroyDevice(vl.device, NULL);
     vkDestroySurfaceKHR(vl.instance, vl.surface, NULL);
     vkDestroyInstance(vl.instance, NULL);
-	window_destroy(&wnd);
+	//window_destroy(&wnd);
 }
 
 
