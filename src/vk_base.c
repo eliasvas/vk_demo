@@ -3,7 +3,7 @@
 #include "stdlib.h"
 #include "string.h"
 
-#define EXEC 1
+#define EXEC
 #ifdef EXEC
 #define NOGLFW 1
 #include "vkwin.h"
@@ -18,7 +18,6 @@ void vk_error(char* text)
 {
     printf("%s\n", text);
 }
-
 #endif
 
 
@@ -203,23 +202,19 @@ typedef struct ShaderDescriptorBinding
     ShaderDescType desc_type; //ubo/image sampler etc..
 }ShaderDescriptorBinding;
 
-#endif
-
-//TODO: finish this or find another way to infer size of a shader variable
-u32 get_format_size(ShaderVarFormat format)
+typedef struct DataBuffer
 {
-    switch(format)
-    {
-        case SHADER_VAR_FORMAT_R32G32B32_SFLOAT:
-            return 3 * sizeof(f32);
-        case SHADER_VAR_FORMAT_R32G32_SFLOAT:
-            return 2 * sizeof(f32);
-        case SHADER_VAR_FORMAT_R32_SFLOAT:
-            return sizeof(f32);
-        default:
-            return 0;
-    }
-}
+    VkDevice device;
+    VkBuffer buffer;
+    VkDeviceMemory mem;
+    VkDescriptorBufferInfo desc;
+    VkDeviceSize size;
+    VkDeviceSize alignment;
+    VkBufferUsageFlags usage_flags;
+    VkMemoryPropertyFlags memory_property_flags;
+    void* mapped;
+    b32 active;
+}DataBuffer;
 
 typedef struct VertexInputAttribute
 {
@@ -244,8 +239,93 @@ typedef struct ShaderMetaInfo
 
 
 
-	u32 input_variable_count;
+    u32 input_variable_count;
 }ShaderMetaInfo;
+typedef struct ShaderObject
+{
+    VkShaderModule module;
+    VkShaderStageFlagBits stage;
+
+    ShaderMetaInfo info;
+
+    b32 uses_push_constants;
+}ShaderObject;
+
+
+
+
+typedef struct PipelineObject
+{
+    ShaderObject vert_shader;
+    ShaderObject frag_shader;
+    ShaderObject compute_shader;
+
+    VkPipeline pipeline;
+    VkPipelineLayout pipeline_layout;
+
+    // do we really need the descriptor pool? (maybe have them in a cache??)
+    VkDescriptorPool descriptor_pools[16]; //pools need to be reallocated with every swapchain recreation! @TODO
+    VkDescriptorSet* descriptor_sets;
+    DataBuffer* uniform_buffers;
+}PipelineObject;
+
+typedef struct VulkanLayer
+{
+    VkInstance instance;
+    VkPhysicalDevice physical_device;
+    VkDevice device;
+    VkSurfaceKHR surface;
+
+    VkQueue graphics_queue;
+    VkQueue present_queue;
+
+
+    //---------------------------------
+    Swapchain swap;
+    //----------------------------------
+    VkImage depth_image;
+    VkDeviceMemory depth_image_memory;
+    VkImageView depth_image_view;
+
+
+    VkCommandPool command_pool;
+    VkCommandBuffer* command_buffers;
+
+    VkRenderPass render_pass;
+    VkRenderPass render_pass2;
+
+
+    PipelineObject fullscreen_pipe;
+    PipelineObject def_pipe;
+    PipelineObject base_pipe;
+
+    u32 image_index; //current image index to draw
+
+}VulkanLayer;
+
+
+VulkanLayer vl;
+#else 
+extern VulkanLayer vl;
+#endif
+
+//TODO: finish this or find another way to infer size of a shader variable
+u32 get_format_size(ShaderVarFormat format)
+{
+    switch(format)
+    {
+        case SHADER_VAR_FORMAT_R32G32B32_SFLOAT:
+            return 3 * sizeof(f32);
+        case SHADER_VAR_FORMAT_R32G32_SFLOAT:
+            return 2 * sizeof(f32);
+        case SHADER_VAR_FORMAT_R32_SFLOAT:
+            return sizeof(f32);
+        default:
+            return 0;
+    }
+}
+
+
 
 u32 calc_vertex_input_total_size(ShaderMetaInfo *info)
 {
@@ -292,79 +372,7 @@ u32 get_attr_desc(VkVertexInputAttributeDescription *attr_desc, ShaderMetaInfo *
 }
 
 
-typedef struct ShaderObject
-{
-	VkShaderModule module;
-	VkShaderStageFlagBits stage;
-	
-	ShaderMetaInfo info;
-	
-	b32 uses_push_constants;
-}ShaderObject;
 
-typedef struct DataBuffer
-{
-	VkDevice device;
-	VkBuffer buffer;
-	VkDeviceMemory mem;
-	VkDescriptorBufferInfo desc;
-	VkDeviceSize size;
-	VkDeviceSize alignment;
-	VkBufferUsageFlags usage_flags;
-	VkMemoryPropertyFlags memory_property_flags;
-	void *mapped;
-    b32 active;
-}DataBuffer;
-
-
-typedef struct PipelineObject
-{
-    ShaderObject vert_shader;
-    ShaderObject frag_shader;
-    ShaderObject compute_shader;
-
-    VkPipeline pipeline;
-    VkPipelineLayout pipeline_layout;
-
-    // do we really need the descriptor pool? (maybe have them in a cache??)
-    VkDescriptorPool descriptor_pools[16]; //pools need to be reallocated with every swapchain recreation! @TODO
-    VkDescriptorSet *descriptor_sets;
-    DataBuffer *uniform_buffers;
-}PipelineObject;
-
-typedef struct VulkanLayer
-{
-	VkInstance instance;
-	VkPhysicalDevice physical_device;
-	VkDevice device;
-	VkSurfaceKHR surface;
-	
-	VkQueue graphics_queue;
-	VkQueue present_queue;
-
-
-	//---------------------------------
-	Swapchain swap;
-	//----------------------------------
-	VkImage depth_image;
-	VkDeviceMemory depth_image_memory;
-	VkImageView depth_image_view;
-	
-	
-	VkCommandPool command_pool;
-	VkCommandBuffer *command_buffers;
-	
-	VkRenderPass render_pass;
-	VkRenderPass render_pass2;
-	
-
-    PipelineObject fullscreen_pipe;
-
-    PipelineObject base_pipe;
-}VulkanLayer;
-
-
-VulkanLayer vl;
 
 
 
@@ -558,7 +566,11 @@ VkPipeline build_pipeline(VkDevice device, PipelineBuilder p,VkRenderPass render
 	
 	VkPipelineDepthStencilStateCreateInfo depth_stencil = {0};
 	depth_stencil.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
+#ifdef EXEC
 	depth_stencil.depthTestEnable = VK_TRUE;
+#else
+    depth_stencil.depthTestEnable = VK_FALSE;
+#endif
 	depth_stencil.depthWriteEnable = VK_TRUE;
 	depth_stencil.depthCompareOp = VK_COMPARE_OP_LESS;
 	depth_stencil.depthBoundsTestEnable = VK_FALSE;
@@ -1951,7 +1963,7 @@ internal void fbo_init(FrameBufferObject *fbo)
 	fbo->depth_attachment = create_depth_attachment(fbo->width, fbo->height);
 	fbo->attachments[0] = create_color_attachment(fbo->width, fbo->height, vl.swap.image_format);
 	fbo->attachment_count = 1;
-	VkRenderPass rp;
+    VkRenderPass rp = { 0 };
 	//now create the  framebuffers
 	for (u32 i=0;i <vl.swap.image_count; ++i)
 	{
@@ -2059,6 +2071,7 @@ internal void vl_base_pipelines_init(void)
 
     pipeline_build_basic(&vl.fullscreen_pipe, "fullscreen.vert", "fullscreen.frag", RPRIMITIVE_TOPOLOGY_TRIANGLE_LIST);
     pipeline_build_basic(&vl.base_pipe, "base.vert", "base.frag", RPRIMITIVE_TOPOLOGY_TRIANGLE_LIST);
+    pipeline_build_basic(&vl.def_pipe, "def.vert", "def.frag", RPRIMITIVE_TOPOLOGY_TRIANGLE_LIST);
 }
 
 typedef struct UniformBufferManager
@@ -2100,7 +2113,7 @@ internal void ubo_manager_reset(u32 image_index)
     ubo_manager.indices[image_index] = 0;
 }
 
-internal void render_cube_immediate(VkCommandBuffer command_buf, u32 image_index, PipelineObject *p, mat4 model)
+void render_cube_immediate(VkCommandBuffer command_buf, u32 image_index, PipelineObject *p, mat4 model)
 {
     VkDescriptorSetLayout layout = shader_create_descriptor_set_layout(&p->vert_shader, &p->frag_shader, 1);
     DataBuffer *uniform_buffer = create_uniform_buffers(&p->vert_shader.info, 1);
@@ -2145,10 +2158,54 @@ internal void render_cube_immediate(VkCommandBuffer command_buf, u32 image_index
     vkCmdBindDescriptorSets(vl.command_buffers[image_index], VK_PIPELINE_BIND_POINT_GRAPHICS, 
                                 p->pipeline_layout, 0, 1, desc_set, 0, NULL);
 
-    vkCmdDrawIndexed(command_buf, array_count(cube_indices), 1, 0, 0, 0);
+    vkCmdDrawIndexed(command_buf, index_buffer_real.size / sizeof(u32), 1, 0, 0, 0);
 	
 }
 
+void render_def_vbo(VkCommandBuffer command_buf, u32 image_index, float *mvp, vec4 color, DataBuffer *vbo, DataBuffer *ibo, u32 index_offset)
+{
+    PipelineObject* p = &vl.def_pipe;
+    VkDescriptorSetLayout layout = shader_create_descriptor_set_layout(&p->vert_shader, &p->frag_shader, 1);
+    DataBuffer* uniform_buffer = create_uniform_buffers(&p->vert_shader.info, 1);
+    Texture textures[] = { sample_texture, sample_texture2 };
+    VkDescriptorSet* desc_set = create_descriptor_sets(layout, &p->vert_shader, &p->frag_shader, p->descriptor_pools[image_index], uniform_buffer, textures, array_count(textures), 1);
+
+    DataBuffer* buf = ubo_manager_get_next_buf(image_index);
+    if (buf == NULL)return;
+    *buf = *uniform_buffer;
+    uniform_buffer = buf;
+
+    vkDestroyDescriptorSetLayout(vl.device, layout, NULL);
+
+
+    vkCmdBindPipeline(command_buf, VK_PIPELINE_BIND_POINT_GRAPHICS, p->pipeline);
+
+    VkBuffer vertex_buffers[] = { vbo->buffer };
+    VkDeviceSize offsets[] = { 0 };
+    vkCmdBindVertexBuffers(command_buf, 0, 1, vertex_buffers, offsets);
+    vkCmdBindIndexBuffer(command_buf, ibo->buffer, 0, VK_INDEX_TYPE_UINT32);
+
+
+
+    void* data = malloc(p->vert_shader.info.descriptor_bindings[0].mem_size);
+
+    shader_set_immediate(&p->vert_shader.info, "WorldViewProj", mvp, data);
+    shader_set_immediate(&p->vert_shader.info, "constColor", &color, data);
+
+
+
+    //copy uniform data to UBO
+    VK_CHECK(buf_map(uniform_buffer, uniform_buffer->size, 0));
+    memcpy(uniform_buffer->mapped, data, p->vert_shader.info.descriptor_bindings[0].mem_size);
+    buf_unmap(uniform_buffer);
+
+
+    vkCmdBindDescriptorSets(vl.command_buffers[image_index], VK_PIPELINE_BIND_POINT_GRAPHICS,
+        p->pipeline_layout, 0, 1, desc_set, 0, NULL);
+
+    vkCmdDrawIndexed(command_buf, ibo->size / sizeof(u32), 1, index_offset, 0, 0);
+
+}
 
 
 
@@ -2332,6 +2389,9 @@ int vulkan_init(void) {
 #ifdef EXEC
     sample_texture = create_texture_image("../assets/test.png",VK_FORMAT_R8G8B8A8_SRGB);
 	sample_texture2 = create_texture_image("../assets/test.png",VK_FORMAT_R8G8B8A8_UNORM);
+#else
+    sample_texture = create_texture_image("../resources/generic/textures/checkerboard.png", VK_FORMAT_R8G8B8A8_SRGB);
+    sample_texture2 = create_texture_image("../resources/generic/textures/checkerboard.png", VK_FORMAT_R8G8B8A8_UNORM);
 #endif
 
 	vl_base_pipelines_init();
@@ -2360,181 +2420,61 @@ int vulkan_init(void) {
 	return 1;
 }
 
-internal void draw_frame(void)
+
+void render_start(void)
 {
-	
-    vkWaitForFences(vl.device, 1, &in_flight_fences[current_frame], VK_TRUE, UINT64_MAX);
-    //[0]: Acquire free image from the swapchain
-    u32 image_index;
-    VkResult res = vkAcquireNextImageKHR(vl.device, vl.swap.swapchain, UINT64_MAX, 
-                                         image_available_semaphores[current_frame], VK_NULL_HANDLE, &image_index);
-    if (res == VK_ERROR_OUT_OF_DATE_KHR){vl_recreate_swapchain();return;}
-    else if (res != VK_SUCCESS && res != VK_SUBOPTIMAL_KHR)vk_error("Failed to acquire swapchain image!");
-    
-    // check if the image is already used (in flight) froma previous frame, and if so wait
-    if (images_in_flight[image_index]!=VK_NULL_HANDLE)vkWaitForFences(vl.device, 1, &images_in_flight[image_index], VK_TRUE, UINT64_MAX);
+        vkWaitForFences(vl.device, 1, &in_flight_fences[current_frame], VK_TRUE, UINT64_MAX);
+        //[0]: Acquire free image from the swapchain
+        
+        VkResult res = vkAcquireNextImageKHR(vl.device, vl.swap.swapchain, UINT64_MAX,
+            image_available_semaphores[current_frame], VK_NULL_HANDLE, &vl.image_index);
+        if (res == VK_ERROR_OUT_OF_DATE_KHR) { vl_recreate_swapchain(); return; }
+        else if (res != VK_SUCCESS && res != VK_SUBOPTIMAL_KHR)vk_error("Failed to acquire swapchain image!");
+
+        // check if the image is already used (in flight) froma previous frame, and if so wait
+        if (images_in_flight[vl.image_index] != VK_NULL_HANDLE)vkWaitForFences(vl.device, 1, &images_in_flight[vl.image_index], VK_TRUE, UINT64_MAX);
 
 
-    ubo_manager_reset(image_index);
-    vkResetDescriptorPool(vl.device, vl.base_pipe.descriptor_pools[image_index], NULL);
-	VK_CHECK(vkResetCommandBuffer(vl.command_buffers[image_index], VK_COMMAND_BUFFER_RESET_RELEASE_RESOURCES_BIT));
-	//----BEGIN RENDER P//ASS----
-	VkCommandBufferBeginInfo begin_info = {0};
-    begin_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
-    begin_info.flags = 0;
-    begin_info.pInheritanceInfo = NULL;
-    VK_CHECK(vkBeginCommandBuffer(vl.command_buffers[image_index], &begin_info));
-	
-	VkRenderPassBeginInfo renderpass_info = {0};
-    renderpass_info.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
-    renderpass_info.renderPass = vl.render_pass;
-    renderpass_info.framebuffer = vl.swap.framebuffers[image_index]; //we bind a _framebuffer_ to a render pass
-    renderpass_info.renderArea.offset.x = 0;
-	renderpass_info.renderArea.offset.y = 0;
-    renderpass_info.renderArea.extent = vl.swap.extent;
-	VkClearValue clear_values[2] = {0};
+        ubo_manager_reset(vl.image_index);
+        vkResetDescriptorPool(vl.device, vl.base_pipe.descriptor_pools[vl.image_index], NULL);
+        vkResetDescriptorPool(vl.device, vl.def_pipe.descriptor_pools[vl.image_index], NULL);
+        VK_CHECK(vkResetCommandBuffer(vl.command_buffers[vl.image_index], VK_COMMAND_BUFFER_RESET_RELEASE_RESOURCES_BIT));
+        //----BEGIN RENDER P//ASS----
+        VkCommandBufferBeginInfo begin_info = { 0 };
+        begin_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+        begin_info.flags = 0;
+        begin_info.pInheritanceInfo = NULL;
+        VK_CHECK(vkBeginCommandBuffer(vl.command_buffers[vl.image_index], &begin_info));
+
+
+        VkRenderPassBeginInfo renderpass_info = { 0 };
+        renderpass_info.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+        renderpass_info.renderPass = vl.render_pass;
+        renderpass_info.framebuffer = vl.swap.framebuffers[vl.image_index]; //we bind a _framebuffer_ to a render pass
+        renderpass_info.renderArea.offset.x = 0;
+        renderpass_info.renderArea.offset.y = 0;
+        renderpass_info.renderArea.extent = vl.swap.extent;
+        VkClearValue clear_values[2] = { 0 };
 #ifdef __cplusplus
-	clear_values[0].color = {{0.0f, 0.0f, 0.0f, 1.0f}};
-	clear_values[1].depthStencil = {1.0f, 0};
+        clear_values[0].color = { {0.0f, 0.0f, 0.0f, 1.0f} };
+        clear_values[1].depthStencil = { 1.0f, 0 };
 #else
-	clear_values[0].color = (VkClearColorValue){{0.0f, 0.0f, 0.0f, 1.0f}};
-	clear_values[1].depthStencil = (VkClearDepthStencilValue){1.0f, 0};
+        clear_values[0].color = (VkClearColorValue){ {0.0f, 0.0f, 0.0f, 1.0f} };
+        clear_values[1].depthStencil = (VkClearDepthStencilValue){ 1.0f, 0 };
 #endif
-	
-    renderpass_info.clearValueCount = array_count(clear_values);
-    renderpass_info.pClearValues = clear_values;
 
-    vkCmdBeginRenderPass(vl.command_buffers[image_index], &renderpass_info, VK_SUBPASS_CONTENTS_INLINE);
-	vkCmdEndRenderPass(vl.command_buffers[image_index]);
-    
-    renderpass_info.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
-    renderpass_info.renderPass = vl.render_pass2;
-    renderpass_info.framebuffer = vl.swap.framebuffers[image_index]; //we bind a _framebuffer_ to a render pass
-    renderpass_info.renderArea.offset.x= 0;
-	renderpass_info.renderArea.offset.y= 0;
-    renderpass_info.renderArea.extent = vl.swap.extent;
-#ifdef __cplusplus
-	clear_values[0].color = {{0.0f, 0.0f, 0.0f, 1.0f}};
-	clear_values[1].depthStencil = {1.0f, 0};
-#else
-	clear_values[0].color = (VkClearColorValue){{0.0f, 0.0f, 0.0f, 1.0f}};
-	clear_values[1].depthStencil = (VkClearDepthStencilValue){1.0f, 0};
-#endif
-	
-    renderpass_info.clearValueCount = array_count(clear_values);
-    renderpass_info.pClearValues = clear_values;
+        renderpass_info.clearValueCount = array_count(clear_values);
+        renderpass_info.pClearValues = clear_values;
 
-    vkCmdBeginRenderPass(vl.command_buffers[image_index], &renderpass_info, VK_SUBPASS_CONTENTS_INLINE);
-    mat4 m = mat4_mul(mat4_translate(v3(1.2,0,-4)),m4d(1.f));
-    render_cube_immediate(vl.command_buffers[image_index], image_index, &vl.base_pipe, m);
-	render_fullscreen(vl.command_buffers[image_index], image_index);
-	vkCmdEndRenderPass(vl.command_buffers[image_index]);
-
-    vkCmdBeginRenderPass(vl.command_buffers[image_index], &renderpass_info, VK_SUBPASS_CONTENTS_INLINE);
-    m = mat4_mul(mat4_translate(v3(-1.2,0,-6)), m4d(1.f));
-    render_cube_immediate(vl.command_buffers[image_index], image_index, &vl.base_pipe, m);
-	vkCmdEndRenderPass(vl.command_buffers[image_index]);
-	
- 
-    VK_CHECK(vkEndCommandBuffer(vl.command_buffers[image_index]));
-
-    //mark image as used by _this frame_
-    images_in_flight[image_index] = in_flight_fences[current_frame];
-    
-    //[1]: Execute the command buffer with that image as attachment in the framebuffer
-    VkSubmitInfo submit_info = {0};
-    submit_info.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
-    VkSemaphore wait_semaphores[] = {image_available_semaphores[current_frame]};
-    VkPipelineStageFlags wait_stages[] = {VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT};
-    submit_info.waitSemaphoreCount = 1;
-    submit_info.pWaitSemaphores = wait_semaphores;
-    submit_info.pWaitDstStageMask = wait_stages;
-    submit_info.commandBufferCount = 1;
-    submit_info.pCommandBuffers = &vl.command_buffers[image_index];
-    VkSemaphore signal_semaphores[] = {render_finished_semaphores[current_frame]};
-    submit_info.signalSemaphoreCount = 1;
-    submit_info.pSignalSemaphores = signal_semaphores;
-    vkResetFences(vl.device, 1, &in_flight_fences[current_frame]);
-    VK_CHECK(vkQueueSubmit(vl.graphics_queue, 1, &submit_info, in_flight_fences[current_frame]));
-    //[2]: Return the image to the swapchain for presentation
-    VkPresentInfoKHR present_info = {0};
-    present_info.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
-    present_info.waitSemaphoreCount = 1;
-    present_info.pWaitSemaphores = signal_semaphores;
-    
-    VkSwapchainKHR swapchains[] = {vl.swap.swapchain};
-    present_info.swapchainCount = 1;
-    present_info.pSwapchains = swapchains;
-    present_info.pImageIndices = &image_index;
-    present_info.pResults = NULL;
-    
-    //we push the data to be presented to the present queue
-    res = vkQueuePresentKHR(vl.present_queue, &present_info); 
-    
-    //recreate swapchain if necessary
-    if (res == VK_ERROR_OUT_OF_DATE_KHR || res == VK_SUBOPTIMAL_KHR || framebuffer_resized)
-    {
-        framebuffer_resized = FALSE;
-        vl_recreate_swapchain();
-    }
-    else if (res != VK_SUCCESS)
-        vk_error("Failed to present swapchain image!");
-    
-    current_frame = (current_frame+1) % MAX_FRAMES_IN_FLIGHT;
+        vkCmdBeginRenderPass(vl.command_buffers[vl.image_index], &renderpass_info, VK_SUBPASS_CONTENTS_INLINE);
+        vkCmdEndRenderPass(vl.command_buffers[vl.image_index]);
 }
-
-void draw_frame_minimal(void)
+void render_end(void)
 {
-
-    vkWaitForFences(vl.device, 1, &in_flight_fences[current_frame], VK_TRUE, UINT64_MAX);
-    //[0]: Acquire free image from the swapchain
-    u32 image_index;
-    VkResult res = vkAcquireNextImageKHR(vl.device, vl.swap.swapchain, UINT64_MAX,
-        image_available_semaphores[current_frame], VK_NULL_HANDLE, &image_index);
-    if (res == VK_ERROR_OUT_OF_DATE_KHR) { vl_recreate_swapchain(); return; }
-    else if (res != VK_SUCCESS && res != VK_SUBOPTIMAL_KHR)vk_error("Failed to acquire swapchain image!");
-
-    // check if the image is already used (in flight) froma previous frame, and if so wait
-    if (images_in_flight[image_index] != VK_NULL_HANDLE)vkWaitForFences(vl.device, 1, &images_in_flight[image_index], VK_TRUE, UINT64_MAX);
-
-
-    
-    VK_CHECK(vkResetCommandBuffer(vl.command_buffers[image_index], VK_COMMAND_BUFFER_RESET_RELEASE_RESOURCES_BIT));
-    //----BEGIN RENDER PASS----
-    VkCommandBufferBeginInfo begin_info = { 0 };
-    begin_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
-    begin_info.flags = 0;
-    begin_info.pInheritanceInfo = NULL;
-    VK_CHECK(vkBeginCommandBuffer(vl.command_buffers[image_index], &begin_info));
-
-    VkRenderPassBeginInfo renderpass_info = { 0 };
-    renderpass_info.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
-    renderpass_info.renderPass = vl.render_pass;
-    renderpass_info.framebuffer = vl.swap.framebuffers[image_index]; //we bind a _framebuffer_ to a render pass
-    renderpass_info.renderArea.offset.x = 0;
-    renderpass_info.renderArea.offset.y = 0;
-    renderpass_info.renderArea.extent = vl.swap.extent;
-    VkClearValue clear_values[2] = { 0 };
-#ifdef __cplusplus
-    clear_values[0].color = { {0.2f, 0.2f, 0.2f, 1.0f} };
-    clear_values[1].depthStencil = { 1.0f, 0 };
-#else
-    clear_values[0].color = (VkClearColorValue){ {0.0f, 0.0f, 0.0f, 1.0f} };
-    clear_values[1].depthStencil = (VkClearDepthStencilValue){ 1.0f, 0 };
-#endif
-
-    renderpass_info.clearValueCount = array_count(clear_values);
-    renderpass_info.pClearValues = clear_values;
-
-    vkCmdBeginRenderPass(vl.command_buffers[image_index], &renderpass_info, VK_SUBPASS_CONTENTS_INLINE);
-    vkCmdEndRenderPass(vl.command_buffers[image_index]);
-
-    //render_fullscreen(vl.command_buffers[image_index], image_index);
-
-    VK_CHECK(vkEndCommandBuffer(vl.command_buffers[image_index]));
+    VK_CHECK(vkEndCommandBuffer(vl.command_buffers[vl.image_index]));
 
     //mark image as used by _this frame_
-    images_in_flight[image_index] = in_flight_fences[current_frame];
+    images_in_flight[vl.image_index] = in_flight_fences[current_frame];
 
     //[1]: Execute the command buffer with that image as attachment in the framebuffer
     VkSubmitInfo submit_info = { 0 };
@@ -2545,7 +2485,7 @@ void draw_frame_minimal(void)
     submit_info.pWaitSemaphores = wait_semaphores;
     submit_info.pWaitDstStageMask = wait_stages;
     submit_info.commandBufferCount = 1;
-    submit_info.pCommandBuffers = &vl.command_buffers[image_index];
+    submit_info.pCommandBuffers = &vl.command_buffers[vl.image_index];
     VkSemaphore signal_semaphores[] = { render_finished_semaphores[current_frame] };
     submit_info.signalSemaphoreCount = 1;
     submit_info.pSignalSemaphores = signal_semaphores;
@@ -2560,11 +2500,11 @@ void draw_frame_minimal(void)
     VkSwapchainKHR swapchains[] = { vl.swap.swapchain };
     present_info.swapchainCount = 1;
     present_info.pSwapchains = swapchains;
-    present_info.pImageIndices = &image_index;
+    present_info.pImageIndices = &vl.image_index;
     present_info.pResults = NULL;
 
     //we push the data to be presented to the present queue
-    res = vkQueuePresentKHR(vl.present_queue, &present_info);
+    VkResult res = vkQueuePresentKHR(vl.present_queue, &present_info);
 
     //recreate swapchain if necessary
     if (res == VK_ERROR_OUT_OF_DATE_KHR || res == VK_SUBOPTIMAL_KHR || framebuffer_resized)
@@ -2576,6 +2516,48 @@ void draw_frame_minimal(void)
         vk_error("Failed to present swapchain image!");
 
     current_frame = (current_frame + 1) % MAX_FRAMES_IN_FLIGHT;
+}
+void draw_frame(void)
+{
+#ifdef EXEC
+    render_start();
+#endif
+	
+	
+	VkRenderPassBeginInfo renderpass_info = { 0 };
+    
+    renderpass_info.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+    renderpass_info.renderPass = vl.render_pass2;
+    renderpass_info.framebuffer = vl.swap.framebuffers[vl.image_index]; //we bind a _framebuffer_ to a render pass
+    renderpass_info.renderArea.offset.x= 0;
+	renderpass_info.renderArea.offset.y= 0;
+    renderpass_info.renderArea.extent = vl.swap.extent;
+    VkClearValue clear_values[2] = { 0 };
+#ifdef __cplusplus
+	clear_values[0].color = {{0.0f, 0.0f, 0.0f, 1.0f}};
+	clear_values[1].depthStencil = {1.0f, 0};
+#else
+	clear_values[0].color = (VkClearColorValue){{0.0f, 0.0f, 0.0f, 1.0f}};
+	clear_values[1].depthStencil = (VkClearDepthStencilValue){1.0f, 0};
+#endif
+	
+    renderpass_info.clearValueCount = array_count(clear_values);
+    renderpass_info.pClearValues = clear_values;
+
+    vkCmdBeginRenderPass(vl.command_buffers[vl.image_index], &renderpass_info, VK_SUBPASS_CONTENTS_INLINE);
+    mat4 m = mat4_mul(mat4_translate(v3(1.2,0,-4)),m4d(1.f));
+    render_cube_immediate(vl.command_buffers[vl.image_index], vl.image_index, &vl.base_pipe, m);
+	//render_fullscreen(vl.command_buffers[image_index], image_index);
+	vkCmdEndRenderPass(vl.command_buffers[vl.image_index]);
+
+    vkCmdBeginRenderPass(vl.command_buffers[vl.image_index], &renderpass_info, VK_SUBPASS_CONTENTS_INLINE);
+    m = mat4_mul(mat4_translate(v3(-1.2,0,-6)), m4d(1.f));
+    render_cube_immediate(vl.command_buffers[vl.image_index], vl.image_index, &vl.base_pipe, m);
+	vkCmdEndRenderPass(vl.command_buffers[vl.image_index]);
+	
+#ifdef EXEC
+    render_end();
+#endif
 }
 
 #ifdef EXEC
