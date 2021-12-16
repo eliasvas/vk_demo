@@ -79,6 +79,9 @@ typedef struct Swapchain
 	VkFramebuffer *framebuffers;
 	FrameBufferAttachment depth_attachment;
 	u32 image_count;
+	
+	VkRenderPass rp_begin;
+	VkRenderPass rp_end;
 }Swapchain;
 
 #define MAX_ATTACHMENTS_COUNT 4
@@ -287,14 +290,14 @@ typedef struct VulkanLayer
     //---------------------------------
     Swapchain swap;
     //----------------------------------
-
+	VkRenderPass swap_rp_begin;
+    VkRenderPass swap_rp_end;
+	VkRenderPass render_pass_basic;
 
     VkCommandPool command_pool;
     VkCommandBuffer* command_buffers;
 
-    VkRenderPass swap_rp_begin;
-    VkRenderPass swap_rp_end;
-	VkRenderPass render_pass_basic;
+    
 
 
     PipelineObject fullscreen_pipe;
@@ -1259,6 +1262,8 @@ VkExtent2D choose_swap_extent(SwapChainSupportDetails details)
     }
 }
 internal FrameBufferAttachment create_depth_attachment(u32 width, u32 height);
+VkRenderPass create_render_pass(VkAttachmentLoadOp load_op,VkImageLayout initial, 
+          VkImageLayout final, u32 color_attachment_count, b32 depth_attachment_active);
 void vl_create_swapchain(void)
 {
 	
@@ -1318,6 +1323,10 @@ void vl_create_swapchain(void)
     vl.swap.image_count = image_count;//TODO(ilias): check
     //printf("new swapchain size: %i\n", image_count);
 	vl.swap.depth_attachment = create_depth_attachment(vl.swap.extent.width, vl.swap.extent.height);
+	
+	vl.swap.rp_begin = create_render_pass(VK_ATTACHMENT_LOAD_OP_CLEAR,VK_IMAGE_LAYOUT_UNDEFINED,VK_IMAGE_LAYOUT_GENERAL, 1, TRUE);
+	vl.swap.rp_end = create_render_pass(VK_ATTACHMENT_LOAD_OP_LOAD,VK_IMAGE_LAYOUT_GENERAL,VK_IMAGE_LAYOUT_PRESENT_SRC_KHR, 1, TRUE);
+	
 }
 
 VkImageView create_image_view(VkImage image, VkFormat format,  VkImageAspectFlags aspect_flags)
@@ -1539,12 +1548,12 @@ VkRenderPass create_render_pass(VkAttachmentLoadOp load_op,VkImageLayout initial
 	VkAttachmentDescription depth_attachment = {0};
 	depth_attachment.format = find_depth_format();
 	depth_attachment.samples = VK_SAMPLE_COUNT_1_BIT;
-	depth_attachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+	depth_attachment.loadOp = load_op;
 	depth_attachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
 	depth_attachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
 	depth_attachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
-	depth_attachment.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-	depth_attachment.finalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+	depth_attachment.initialLayout = initial;
+	depth_attachment.finalLayout = final;
     
 	VkAttachmentReference depth_attachment_ref = {0};
     depth_attachment_ref.attachment = color_attachment_count; //for 1 attachment its in 1, for 2 in 2([0,1,2]) and so on..
@@ -1855,6 +1864,20 @@ void transition_image_layout(VkImage image, VkFormat format, VkImageLayout old_l
 		src_stage = VK_PIPELINE_STAGE_TRANSFER_BIT;
 		dst_stage = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
 	}else if (old_layout == VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL && new_layout == VK_IMAGE_LAYOUT_PRESENT_SRC_KHR)
+	{
+		barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+		barrier.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+		
+		src_stage = VK_PIPELINE_STAGE_TRANSFER_BIT;
+		dst_stage = VK_PIPELINE_STAGE_TRANSFER_BIT;
+	}else if (old_layout == VK_IMAGE_LAYOUT_UNDEFINED && new_layout == VK_IMAGE_LAYOUT_GENERAL)
+	{
+		barrier.srcAccessMask = 0;
+		barrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+		
+		src_stage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
+		dst_stage = VK_PIPELINE_STAGE_TRANSFER_BIT;
+	}else
 	{
 		barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
 		barrier.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
@@ -2273,6 +2296,8 @@ internal void vl_cleanup_swapchain(void)
         vkDestroyImageView(vl.device, vl.swap.image_views[i], NULL);
     vkDestroySwapchainKHR(vl.device, vl.swap.swapchain, NULL);
 	cleanup_fbo_attachment(&vl.swap.depth_attachment);
+	vkDestroyRenderPass(vl.device, vl.swap.rp_begin, NULL);
+	vkDestroyRenderPass(vl.device, vl.swap.rp_end, NULL);
 }
 
 internal void vl_recreate_swapchain(void)
@@ -2291,8 +2316,6 @@ internal void vl_recreate_swapchain(void)
     vl_cleanup_swapchain();
     vl_create_swapchain();
     vl_create_swapchain_image_views();
-	vl.swap_rp_begin = create_render_pass(VK_ATTACHMENT_LOAD_OP_CLEAR,VK_IMAGE_LAYOUT_UNDEFINED,VK_IMAGE_LAYOUT_GENERAL, 1, TRUE);
-	vl.swap_rp_end = create_render_pass(VK_ATTACHMENT_LOAD_OP_LOAD,VK_IMAGE_LAYOUT_GENERAL,VK_IMAGE_LAYOUT_PRESENT_SRC_KHR, 1, TRUE);
 	vl.render_pass_basic = create_render_pass(VK_ATTACHMENT_LOAD_OP_LOAD,VK_IMAGE_LAYOUT_GENERAL,VK_IMAGE_LAYOUT_GENERAL, 1, TRUE);
     
     
@@ -2387,8 +2410,6 @@ internal void vulkan_layer_init(void)
     vl_create_logical_device();
     vl_create_swapchain();
     vl_create_swapchain_image_views();
-	vl.swap_rp_begin = create_render_pass(VK_ATTACHMENT_LOAD_OP_CLEAR,VK_IMAGE_LAYOUT_UNDEFINED,VK_IMAGE_LAYOUT_GENERAL, 1, TRUE);
-	vl.swap_rp_end = create_render_pass(VK_ATTACHMENT_LOAD_OP_LOAD,VK_IMAGE_LAYOUT_GENERAL,VK_IMAGE_LAYOUT_PRESENT_SRC_KHR, 1, TRUE);
 	vl.render_pass_basic = create_render_pass(VK_ATTACHMENT_LOAD_OP_LOAD,VK_IMAGE_LAYOUT_GENERAL,VK_IMAGE_LAYOUT_GENERAL, 1, TRUE);
 	vl_swap_create_framebuffers();
     vl_create_command_pool();
@@ -2436,58 +2457,57 @@ int vulkan_init(void) {
 }
 
 
-void render_start(void)
+void frame_start(void)
 {
-        vkWaitForFences(vl.device, 1, &in_flight_fences[current_frame], VK_TRUE, UINT64_MAX);
-        //[0]: Acquire free image from the swapchain
+    vkWaitForFences(vl.device, 1, &in_flight_fences[current_frame], VK_TRUE, UINT64_MAX);
+    //[0]: Acquire free image from the swapchain
+ 
+    VkResult res = vkAcquireNextImageKHR(vl.device, vl.swap.swapchain, UINT64_MAX,
+        image_available_semaphores[current_frame], VK_NULL_HANDLE, &vl.image_index);
+    if (res == VK_ERROR_OUT_OF_DATE_KHR) { vl_recreate_swapchain(); return; }
+    else if (res != VK_SUCCESS && res != VK_SUBOPTIMAL_KHR)vk_error("Failed to acquire swapchain image!");
+
+    // check if the image is already used (in flight) froma previous frame, and if so wait
+    if (images_in_flight[vl.image_index] != VK_NULL_HANDLE)vkWaitForFences(vl.device, 1, &images_in_flight[vl.image_index], VK_TRUE, UINT64_MAX);
+
+
+    ubo_manager_reset(vl.image_index);
+    vkResetDescriptorPool(vl.device, vl.base_pipe.descriptor_pools[vl.image_index], NULL);
+    vkResetDescriptorPool(vl.device, vl.def_pipe.descriptor_pools[vl.image_index], NULL);
+    VK_CHECK(vkResetCommandBuffer(vl.command_buffers[vl.image_index], VK_COMMAND_BUFFER_RESET_RELEASE_RESOURCES_BIT));
         
-        VkResult res = vkAcquireNextImageKHR(vl.device, vl.swap.swapchain, UINT64_MAX,
-            image_available_semaphores[current_frame], VK_NULL_HANDLE, &vl.image_index);
-        if (res == VK_ERROR_OUT_OF_DATE_KHR) { vl_recreate_swapchain(); return; }
-        else if (res != VK_SUCCESS && res != VK_SUBOPTIMAL_KHR)vk_error("Failed to acquire swapchain image!");
+		
+    VkCommandBufferBeginInfo begin_info = { 0 };
+    begin_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+    begin_info.flags = 0;
+    begin_info.pInheritanceInfo = NULL;
+    VK_CHECK(vkBeginCommandBuffer(vl.command_buffers[vl.image_index], &begin_info));
 
-        // check if the image is already used (in flight) froma previous frame, and if so wait
-        if (images_in_flight[vl.image_index] != VK_NULL_HANDLE)vkWaitForFences(vl.device, 1, &images_in_flight[vl.image_index], VK_TRUE, UINT64_MAX);
-
-
-        ubo_manager_reset(vl.image_index);
-        vkResetDescriptorPool(vl.device, vl.base_pipe.descriptor_pools[vl.image_index], NULL);
-        vkResetDescriptorPool(vl.device, vl.def_pipe.descriptor_pools[vl.image_index], NULL);
-        VK_CHECK(vkResetCommandBuffer(vl.command_buffers[vl.image_index], VK_COMMAND_BUFFER_RESET_RELEASE_RESOURCES_BIT));
-        //----BEGIN RENDER P//ASS----
-        VkCommandBufferBeginInfo begin_info = { 0 };
-        begin_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
-        begin_info.flags = 0;
-        begin_info.pInheritanceInfo = NULL;
-        VK_CHECK(vkBeginCommandBuffer(vl.command_buffers[vl.image_index], &begin_info));
-
-		//first we transition the swapchain to LAYOUT_GENERAL
-        VkRenderPassBeginInfo renderpass_info = { 0 };
-        renderpass_info.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
-        renderpass_info.renderPass = vl.swap_rp_begin;
-        renderpass_info.framebuffer = vl.swap.framebuffers[vl.image_index]; //we bind a _framebuffer_ to a render pass
-        renderpass_info.renderArea.offset.x = 0;
-        renderpass_info.renderArea.offset.y = 0;
-        renderpass_info.renderArea.extent = vl.swap.extent;
-        VkClearValue clear_values[2] = { 0 };
+    VkRenderPassBeginInfo renderpass_info = { 0 };
+    renderpass_info.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+    renderpass_info.renderPass = vl.swap.rp_begin;
+    renderpass_info.framebuffer = vl.swap.framebuffers[vl.image_index]; //we bind a _framebuffer_ to a render pass
+    renderpass_info.renderArea.offset.x= 0;
+	renderpass_info.renderArea.offset.y= 0;
+    renderpass_info.renderArea.extent = vl.swap.extent;
+    VkClearValue clear_values[2] = { 0 };
 #ifdef __cplusplus
-        clear_values[0].color = { {0.0f, 0.0f, 0.0f, 1.0f} };
-        clear_values[1].depthStencil = { 1.0f, 0 };
+	clear_values[0].color = {{0.0f, 0.0f, 0.0f, 1.0f}};
+	clear_values[1].depthStencil = {1.0f, 0};
 #else
-        clear_values[0].color = (VkClearColorValue){ {0.0f, 0.0f, 0.0f, 1.0f} };
-        clear_values[1].depthStencil = (VkClearDepthStencilValue){ 1.0f, 0 };
+	clear_values[0].color = (VkClearColorValue){{0.0f, 0.0f, 0.0f, 1.0f}};
+	clear_values[1].depthStencil = (VkClearDepthStencilValue){1.0f, 0};
 #endif
-        renderpass_info.clearValueCount = array_count(clear_values);
-        renderpass_info.pClearValues = clear_values;
-
-        vkCmdBeginRenderPass(vl.command_buffers[vl.image_index], &renderpass_info, VK_SUBPASS_CONTENTS_INLINE);
-        vkCmdEndRenderPass(vl.command_buffers[vl.image_index]);
+    renderpass_info.clearValueCount = array_count(clear_values);
+    renderpass_info.pClearValues = clear_values;
+    vkCmdBeginRenderPass(vl.command_buffers[vl.image_index], &renderpass_info, VK_SUBPASS_CONTENTS_INLINE);
+	vkCmdEndRenderPass(vl.command_buffers[vl.image_index]);
 }
-void render_end(void)
+void frame_end(void)
 {
 	VkRenderPassBeginInfo renderpass_info = { 0 };
     renderpass_info.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
-    renderpass_info.renderPass = vl.swap_rp_end;
+    renderpass_info.renderPass = vl.swap.rp_end;
     renderpass_info.framebuffer = vl.swap.framebuffers[vl.image_index]; //we bind a _framebuffer_ to a render pass
     renderpass_info.renderArea.offset.x= 0;
 	renderpass_info.renderArea.offset.y= 0;
@@ -2554,7 +2574,7 @@ void render_end(void)
 void draw_frame(void)
 {
 #ifdef EXEC
-    render_start();
+    frame_start();
 #endif
 	
 	
@@ -2579,7 +2599,7 @@ void draw_frame(void)
     renderpass_info.pClearValues = clear_values;
 
     vkCmdBeginRenderPass(vl.command_buffers[vl.image_index], &renderpass_info, VK_SUBPASS_CONTENTS_INLINE);
-    mat4 m = mat4_mul(mat4_translate(v3(1.2,0,-4)),m4d(1.f));
+    mat4 m = mat4_mul(mat4_translate(v3(1.2 * sin(get_time()),0,-4)),m4d(1.f));
     render_cube_immediate(vl.command_buffers[vl.image_index], vl.image_index, &vl.base_pipe, m);
 	//render_fullscreen(vl.command_buffers[image_index], image_index);
 	vkCmdEndRenderPass(vl.command_buffers[vl.image_index]);
@@ -2590,7 +2610,7 @@ void draw_frame(void)
 	vkCmdEndRenderPass(vl.command_buffers[vl.image_index]);
 	
 #ifdef EXEC
-    render_end();
+    frame_end();
 #endif
 }
 
