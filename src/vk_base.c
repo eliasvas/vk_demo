@@ -55,16 +55,7 @@ s32 window_h = 600;
 
 #define MAX_SWAP_IMAGE_COUNT 4
 
-typedef struct Swapchain
-{ 
-	VkSwapchainKHR swapchain;
-	VkImage *images;
-	VkFormat image_format;
-	VkExtent2D extent;
-	VkImageView *image_views;
-	VkFramebuffer *framebuffers;
-	u32 image_count;
-}Swapchain;
+
 
 typedef struct FrameBufferAttachment 
 { 
@@ -78,12 +69,25 @@ typedef struct FrameBufferAttachment
 }FrameBufferAttachment;
 
 
+typedef struct Swapchain
+{ 
+	VkSwapchainKHR swapchain;
+	VkImage *images;
+	VkFormat image_format;
+	VkExtent2D extent;
+	VkImageView *image_views;
+	VkFramebuffer *framebuffers;
+	FrameBufferAttachment depth_attachment;
+	u32 image_count;
+}Swapchain;
+
 #define MAX_ATTACHMENTS_COUNT 4
 typedef struct FrameBufferObject
 {
 	u32 width, height; //should framebuffers be RESIZED when the swapchain resizes??????
 	VkFramebuffer framebuffers[MAX_SWAP_IMAGE_COUNT];
 	FrameBufferAttachment depth_attachment;
+	b32 has_depth;
 	FrameBufferAttachment attachments[MAX_ATTACHMENTS_COUNT]; //pos,color,normal?
 	u32 attachment_count;
 	VkRenderPass renderpass;
@@ -283,16 +287,14 @@ typedef struct VulkanLayer
     //---------------------------------
     Swapchain swap;
     //----------------------------------
-    VkImage depth_image;
-    VkDeviceMemory depth_image_memory;
-    VkImageView depth_image_view;
 
 
     VkCommandPool command_pool;
     VkCommandBuffer* command_buffers;
 
-    VkRenderPass render_pass;
-    VkRenderPass render_pass2;
+    VkRenderPass swap_rp_begin;
+    VkRenderPass swap_rp_end;
+	VkRenderPass render_pass_basic;
 
 
     PipelineObject fullscreen_pipe;
@@ -372,8 +374,29 @@ u32 get_attr_desc(VkVertexInputAttributeDescription *attr_desc, ShaderMetaInfo *
 }
 
 
+internal void cleanup_fbo_attachment(FrameBufferAttachment *a)
+{
+	for (u32 i = 0; i <a->image_count; ++i)
+	{
+		vkDestroyImage(vl.device, a->images[i], NULL);
+		vkFreeMemory(vl.device, a->mems[i], NULL);
+		vkDestroyImageView(vl.device, a->views[i], NULL);
+		vkDestroySampler(vl.device, a->samplers[i], NULL);
+	}
+}
 
 
+internal void fbo_cleanup(FrameBufferObject *fbo)
+{
+
+	u32 attachment_count = minimum(4, fbo->attachment_count);
+	for (u32 i = 0; i < attachment_count; ++i)
+		cleanup_fbo_attachment(&fbo->attachments[i]);
+	if (fbo->has_depth)cleanup_fbo_attachment(&fbo->depth_attachment);
+	for (u32 i = 0; i < attachment_count; ++i)
+        vkDestroyFramebuffer(vl.device, fbo->framebuffers[i], NULL);
+	vkDestroyRenderPass(vl.device, fbo->renderpass, NULL);
+}
 
 
 //attaches ALLOCATED memory block to buffer!
@@ -872,7 +895,7 @@ DataBuffer vertex_buffer_real;
 DataBuffer index_buffer_real;
 
 
-typedef struct Texture {
+typedef struct TextureObject {
 		VkSampler sampler;
 		VkImage image;
 		VkImageLayout image_layout;
@@ -880,10 +903,10 @@ typedef struct Texture {
 		VkImageView view;
 		u32 width, height;
 		u32 mip_levels;
-} Texture;
+} TextureObject;
 
-Texture sample_texture;
-Texture sample_texture2;
+TextureObject sample_texture;
+TextureObject sample_texture2;
 
 u32 current_frame = 0;
 u32 framebuffer_resized = FALSE;
@@ -1235,9 +1258,10 @@ VkExtent2D choose_swap_extent(SwapChainSupportDetails details)
         return actual_extent;
     }
 }
-
+internal FrameBufferAttachment create_depth_attachment(u32 width, u32 height);
 void vl_create_swapchain(void)
 {
+	
     SwapChainSupportDetails swapchain_support = query_swapchain_support(vl.physical_device);
     
     VkSurfaceFormatKHR surface_format =choose_swap_surface_format(swapchain_support);
@@ -1284,13 +1308,16 @@ void vl_create_swapchain(void)
     
     VK_CHECK(vkCreateSwapchainKHR(vl.device, &create_info, NULL, &vl.swap.swapchain));
     
-    vkGetSwapchainImagesKHR(vl.device, vl.swap.swapchain, &image_count, NULL);
+	
+    
+	vkGetSwapchainImagesKHR(vl.device, vl.swap.swapchain, &image_count, NULL);
     vl.swap.images = (VkImage*)malloc(sizeof(VkImage) * image_count);
     vkGetSwapchainImagesKHR(vl.device, vl.swap.swapchain, &image_count, vl.swap.images);
     vl.swap.image_format = surface_format.format;
     vl.swap.extent = extent;
     vl.swap.image_count = image_count;//TODO(ilias): check
     //printf("new swapchain size: %i\n", image_count);
+	vl.swap.depth_attachment = create_depth_attachment(vl.swap.extent.width, vl.swap.extent.height);
 }
 
 VkImageView create_image_view(VkImage image, VkFormat format,  VkImageAspectFlags aspect_flags)
@@ -1366,7 +1393,7 @@ void vl_create_logical_device(void)
 
 
 
-VkDescriptorSet *create_descriptor_sets(VkDescriptorSetLayout layout, ShaderObject *vert,ShaderObject *frag, VkDescriptorPool pool, DataBuffer *uni_buffers,Texture *textures, u32 texture_count,  u32 set_count)
+VkDescriptorSet *create_descriptor_sets(VkDescriptorSetLayout layout, ShaderObject *vert,ShaderObject *frag, VkDescriptorPool pool, DataBuffer *uni_buffers,TextureObject *textures, u32 texture_count,  u32 set_count)
 {
     VkDescriptorSetLayout *layouts = (VkDescriptorSetLayout*)malloc(sizeof(VkDescriptorSetLayout)*set_count);
     for (u32 i = 0; i < set_count; ++i)
@@ -1565,16 +1592,16 @@ VkRenderPass create_render_pass(VkAttachmentLoadOp load_op,VkImageLayout initial
 
 
 
-void vl_create_framebuffers(void)
+void vl_swap_create_framebuffers(void)
 {
     vl.swap.framebuffers = (VkFramebuffer*)malloc(sizeof(VkFramebuffer) * vl.swap.image_count); 
     for (u32 i = 0; i < vl.swap.image_count; ++i)
     {
-        VkImageView attachments[] = {vl.swap.image_views[i], vl.depth_image_view};
+        VkImageView attachments[] = {vl.swap.image_views[i], vl.swap.depth_attachment.views[0]};
         
         VkFramebufferCreateInfo framebuffer_info = {0};
         framebuffer_info.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
-        framebuffer_info.renderPass = vl.render_pass; //VkFramebuffers need a render pass?
+        framebuffer_info.renderPass = vl.render_pass_basic; //VkFramebuffers need a render pass?
         framebuffer_info.attachmentCount = array_count(attachments);
         framebuffer_info.pAttachments = attachments;
         framebuffer_info.width = vl.swap.extent.width;
@@ -1961,6 +1988,7 @@ internal void fbo_init(FrameBufferObject *fbo)
 	fbo->width = vl.swap.extent.width;
 	fbo->height = vl.swap.extent.height;
 	fbo->depth_attachment = create_depth_attachment(fbo->width, fbo->height);
+	fbo->has_depth = TRUE;
 	fbo->attachments[0] = create_color_attachment(fbo->width, fbo->height, vl.swap.image_format);
 	fbo->attachment_count = 1;
     VkRenderPass rp = { 0 };
@@ -1988,17 +2016,6 @@ internal void fbo_init(FrameBufferObject *fbo)
 		buf_free(attachments);
 	}
 }
-
-
-internal void vl_create_depth_resources(void)
-{
-	VkFormat depth_format = find_depth_format();
-	create_image(vl.swap.extent.width, vl.swap.extent.height, 
-		depth_format, VK_IMAGE_TILING_OPTIMAL, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT, 
-		VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, &vl.depth_image, &vl.depth_image_memory);
-	vl.depth_image_view = create_image_view(vl.depth_image, depth_format, VK_IMAGE_ASPECT_DEPTH_BIT);
-}
-
 
 internal DataBuffer *create_uniform_buffers(ShaderMetaInfo *info, u32 buffer_count) //=vl.swap.image_count
 {
@@ -2044,7 +2061,7 @@ internal void pipeline_build_basic(PipelineObject *p,const char *vert, const cha
     VkPipelineLayoutCreateInfo info = pipe_layout_create_info(&layout, 1);
 	VK_CHECK(vkCreatePipelineLayout(vl.device, &info, NULL, &pb.pipeline_layout));
 	VK_CHECK(vkCreatePipelineLayout(vl.device, &info, NULL, &p->pipeline_layout));
-	p->pipeline = build_pipeline(vl.device, pb, vl.render_pass);
+	p->pipeline = build_pipeline(vl.device, pb, vl.render_pass_basic);
 
 
     for (u32 i = 0;i < vl.swap.image_count; ++i)
@@ -2117,7 +2134,7 @@ void render_cube_immediate(VkCommandBuffer command_buf, u32 image_index, Pipelin
 {
     VkDescriptorSetLayout layout = shader_create_descriptor_set_layout(&p->vert_shader, &p->frag_shader, 1);
     DataBuffer *uniform_buffer = create_uniform_buffers(&p->vert_shader.info, 1);
-	Texture textures[] = {sample_texture, sample_texture2};
+	TextureObject textures[] = {sample_texture, sample_texture2};
     VkDescriptorSet *desc_set = create_descriptor_sets(layout, &p->vert_shader,&p->frag_shader, p->descriptor_pools[image_index], uniform_buffer,textures, array_count(textures),  1);
 
     DataBuffer *buf = ubo_manager_get_next_buf(image_index);
@@ -2167,7 +2184,7 @@ void render_def_vbo(VkCommandBuffer command_buf, u32 image_index, float *mvp, ve
     PipelineObject* p = &vl.def_pipe;
     VkDescriptorSetLayout layout = shader_create_descriptor_set_layout(&p->vert_shader, &p->frag_shader, 1);
     DataBuffer* uniform_buffer = create_uniform_buffers(&p->vert_shader.info, 1);
-    Texture textures[] = { sample_texture, sample_texture2 };
+    TextureObject textures[] = { sample_texture, sample_texture2 };
     VkDescriptorSet* desc_set = create_descriptor_sets(layout, &p->vert_shader, &p->frag_shader, p->descriptor_pools[image_index], uniform_buffer, textures, array_count(textures), 1);
 
     DataBuffer* buf = ubo_manager_get_next_buf(image_index);
@@ -2249,16 +2266,13 @@ internal void framebuffer_resize_callback(void){framebuffer_resized = TRUE;}
 
 internal void vl_cleanup_swapchain(void)
 {
-	vkDestroyImageView(vl.device, vl.depth_image_view, NULL);
-    vkDestroyImage(vl.device, vl.depth_image, NULL);
-    vkFreeMemory(vl.device, vl.depth_image_memory, NULL);
     for (u32 i = 0; i < vl.swap.image_count; ++i)
         vkDestroyFramebuffer(vl.device, vl.swap.framebuffers[i], NULL);
 	vkDestroyPipeline(vl.device, vl.fullscreen_pipe.pipeline, NULL);
-    vkDestroyRenderPass(vl.device, vl.render_pass, NULL);
     for (u32 i = 0; i < vl.swap.image_count; ++i)
         vkDestroyImageView(vl.device, vl.swap.image_views[i], NULL);
     vkDestroySwapchainKHR(vl.device, vl.swap.swapchain, NULL);
+	cleanup_fbo_attachment(&vl.swap.depth_attachment);
 }
 
 internal void vl_recreate_swapchain(void)
@@ -2277,14 +2291,14 @@ internal void vl_recreate_swapchain(void)
     vl_cleanup_swapchain();
     vl_create_swapchain();
     vl_create_swapchain_image_views();
-	vl.render_pass = create_render_pass(VK_ATTACHMENT_LOAD_OP_CLEAR,VK_IMAGE_LAYOUT_UNDEFINED,VK_IMAGE_LAYOUT_PRESENT_SRC_KHR, 1, TRUE);
-	vl.render_pass2 = create_render_pass(VK_ATTACHMENT_LOAD_OP_LOAD,VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,VK_IMAGE_LAYOUT_PRESENT_SRC_KHR, 1, TRUE);
+	vl.swap_rp_begin = create_render_pass(VK_ATTACHMENT_LOAD_OP_CLEAR,VK_IMAGE_LAYOUT_UNDEFINED,VK_IMAGE_LAYOUT_GENERAL, 1, TRUE);
+	vl.swap_rp_end = create_render_pass(VK_ATTACHMENT_LOAD_OP_LOAD,VK_IMAGE_LAYOUT_GENERAL,VK_IMAGE_LAYOUT_PRESENT_SRC_KHR, 1, TRUE);
+	vl.render_pass_basic = create_render_pass(VK_ATTACHMENT_LOAD_OP_LOAD,VK_IMAGE_LAYOUT_GENERAL,VK_IMAGE_LAYOUT_GENERAL, 1, TRUE);
     
     
 	vl_base_pipelines_init();
 	
-	vl_create_depth_resources();
-    vl_create_framebuffers();
+    vl_swap_create_framebuffers();
     vl_create_command_buffers();
 }
 
@@ -2315,9 +2329,9 @@ internal void create_texture_sampler(VkSampler *sampler)
 }
 
 //TODO(ilias): add mip-mapping + option for staging buffer + native linear encoding
-internal Texture create_texture_image(char *filename, VkFormat format)
+internal TextureObject create_texture_image(char *filename, VkFormat format)
 {
-	Texture tex;
+	TextureObject tex;
 	//[0]: we read an image and store all the pixels in a pointer
 	s32 tex_w, tex_h, tex_c;
 	stbi_uc *pixels = stbi_load(filename, &tex_w, &tex_h, &tex_c, STBI_rgb_alpha);
@@ -2327,13 +2341,13 @@ internal Texture create_texture_image(char *filename, VkFormat format)
 	//[2]: we create a buffer to hold the pixel information (we also fill it)
 	DataBuffer idb;
 	if (!pixels)
-		vk_error("Error loading image!");
+		vk_error("Error loading image %s!\n", filename);
 	create_buffer(VK_BUFFER_USAGE_TRANSFER_SRC_BIT, 
 	(VkMemoryPropertyFlagBits)(VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT), &idb, image_size, pixels);
 	//[3]: we free the cpu side image, we don't need it
 	stbi_image_free(pixels);
 	//[4]: we create the VkImage that is undefined right now
-	create_image(tex_w, tex_h, format, VK_IMAGE_TILING_OPTIMAL, VK_IMAGE_USAGE_TRANSFER_DST_BIT 
+	create_image(tex_w, tex_h, format, VK_IMAGE_TILING_LINEAR, VK_IMAGE_USAGE_TRANSFER_DST_BIT 
 		| VK_IMAGE_USAGE_SAMPLED_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, &tex.image, &tex.device_mem);
 	
 	//[5]: we transition the images layout from undefined to dst_optimal
@@ -2373,10 +2387,10 @@ internal void vulkan_layer_init(void)
     vl_create_logical_device();
     vl_create_swapchain();
     vl_create_swapchain_image_views();
-	vl.render_pass = create_render_pass(VK_ATTACHMENT_LOAD_OP_CLEAR,VK_IMAGE_LAYOUT_UNDEFINED,VK_IMAGE_LAYOUT_PRESENT_SRC_KHR, 1, TRUE);
-	vl.render_pass2 = create_render_pass(VK_ATTACHMENT_LOAD_OP_LOAD,VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,VK_IMAGE_LAYOUT_PRESENT_SRC_KHR, 1, TRUE);
-	vl_create_depth_resources();
-	vl_create_framebuffers();
+	vl.swap_rp_begin = create_render_pass(VK_ATTACHMENT_LOAD_OP_CLEAR,VK_IMAGE_LAYOUT_UNDEFINED,VK_IMAGE_LAYOUT_GENERAL, 1, TRUE);
+	vl.swap_rp_end = create_render_pass(VK_ATTACHMENT_LOAD_OP_LOAD,VK_IMAGE_LAYOUT_GENERAL,VK_IMAGE_LAYOUT_PRESENT_SRC_KHR, 1, TRUE);
+	vl.render_pass_basic = create_render_pass(VK_ATTACHMENT_LOAD_OP_LOAD,VK_IMAGE_LAYOUT_GENERAL,VK_IMAGE_LAYOUT_GENERAL, 1, TRUE);
+	vl_swap_create_framebuffers();
     vl_create_command_pool();
 	
 }
@@ -2386,6 +2400,7 @@ FrameBufferObject fbo1;
 int vulkan_init(void) {
 	vulkan_layer_init();
 	//fbo_init(&fbo1);
+	//fbo_cleanup(&fbo1);
 #ifdef EXEC
     sample_texture = create_texture_image("../assets/test.png",VK_FORMAT_R8G8B8A8_SRGB);
 	sample_texture2 = create_texture_image("../assets/test.png",VK_FORMAT_R8G8B8A8_UNORM);
@@ -2446,10 +2461,10 @@ void render_start(void)
         begin_info.pInheritanceInfo = NULL;
         VK_CHECK(vkBeginCommandBuffer(vl.command_buffers[vl.image_index], &begin_info));
 
-
+		//first we transition the swapchain to LAYOUT_GENERAL
         VkRenderPassBeginInfo renderpass_info = { 0 };
         renderpass_info.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
-        renderpass_info.renderPass = vl.render_pass;
+        renderpass_info.renderPass = vl.swap_rp_begin;
         renderpass_info.framebuffer = vl.swap.framebuffers[vl.image_index]; //we bind a _framebuffer_ to a render pass
         renderpass_info.renderArea.offset.x = 0;
         renderpass_info.renderArea.offset.y = 0;
@@ -2462,7 +2477,6 @@ void render_start(void)
         clear_values[0].color = (VkClearColorValue){ {0.0f, 0.0f, 0.0f, 1.0f} };
         clear_values[1].depthStencil = (VkClearDepthStencilValue){ 1.0f, 0 };
 #endif
-
         renderpass_info.clearValueCount = array_count(clear_values);
         renderpass_info.pClearValues = clear_values;
 
@@ -2471,6 +2485,26 @@ void render_start(void)
 }
 void render_end(void)
 {
+	VkRenderPassBeginInfo renderpass_info = { 0 };
+    renderpass_info.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+    renderpass_info.renderPass = vl.swap_rp_end;
+    renderpass_info.framebuffer = vl.swap.framebuffers[vl.image_index]; //we bind a _framebuffer_ to a render pass
+    renderpass_info.renderArea.offset.x= 0;
+	renderpass_info.renderArea.offset.y= 0;
+    renderpass_info.renderArea.extent = vl.swap.extent;
+    VkClearValue clear_values[2] = { 0 };
+#ifdef __cplusplus
+	clear_values[0].color = {{0.0f, 0.0f, 0.0f, 1.0f}};
+	clear_values[1].depthStencil = {1.0f, 0};
+#else
+	clear_values[0].color = (VkClearColorValue){{0.0f, 0.0f, 0.0f, 1.0f}};
+	clear_values[1].depthStencil = (VkClearDepthStencilValue){1.0f, 0};
+#endif
+    renderpass_info.clearValueCount = array_count(clear_values);
+    renderpass_info.pClearValues = clear_values;
+    vkCmdBeginRenderPass(vl.command_buffers[vl.image_index], &renderpass_info, VK_SUBPASS_CONTENTS_INLINE);
+	vkCmdEndRenderPass(vl.command_buffers[vl.image_index]);
+	
     VK_CHECK(vkEndCommandBuffer(vl.command_buffers[vl.image_index]));
 
     //mark image as used by _this frame_
@@ -2527,7 +2561,7 @@ void draw_frame(void)
 	VkRenderPassBeginInfo renderpass_info = { 0 };
     
     renderpass_info.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
-    renderpass_info.renderPass = vl.render_pass2;
+    renderpass_info.renderPass = vl.render_pass_basic;
     renderpass_info.framebuffer = vl.swap.framebuffers[vl.image_index]; //we bind a _framebuffer_ to a render pass
     renderpass_info.renderArea.offset.x= 0;
 	renderpass_info.renderArea.offset.y= 0;
