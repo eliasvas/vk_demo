@@ -9,7 +9,6 @@
 #include "vkwin.h"
 Window wnd;
 #else
-#include "vk_base.h"
 extern int vk_getWidth();
 extern int vk_getHeight();
 extern HWND vk_getWindowSystemHandle();
@@ -18,6 +17,7 @@ void vk_error(char* text)
 {
     printf("%s\n", text);
 }
+#include "vk_base.h"
 #endif
 
 
@@ -275,6 +275,16 @@ typedef struct PipelineObject
     VkDescriptorSet* descriptor_sets;
     DataBuffer* uniform_buffers;
 }PipelineObject;
+
+typedef struct TextureObject {
+    VkSampler sampler;
+    VkImage image;
+    VkImageLayout image_layout;
+    VkDeviceMemory device_mem;
+    VkImageView view;
+    u32 width, height;
+    u32 mip_levels;
+} TextureObject;
 
 typedef struct VulkanLayer
 {
@@ -898,15 +908,7 @@ DataBuffer vertex_buffer_real;
 DataBuffer index_buffer_real;
 
 
-typedef struct TextureObject {
-		VkSampler sampler;
-		VkImage image;
-		VkImageLayout image_layout;
-		VkDeviceMemory device_mem;
-		VkImageView view;
-		u32 width, height;
-		u32 mip_levels;
-} TextureObject;
+
 
 TextureObject sample_texture;
 TextureObject sample_texture2;
@@ -1423,7 +1425,7 @@ VkDescriptorSet *create_descriptor_sets(VkDescriptorSetLayout layout, ShaderObje
         buffer_info.range = vert->info.descriptor_bindings[0].mem_size; //@check
 		
 		VkDescriptorImageInfo image_infos[4] = {0};
-		for (u32 t = 0; t < texture_count; ++t)
+		for (u32 t = 0; t < texture_count && textures; ++t)
 		{
 			image_infos[t].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
 			image_infos[t].sampler = textures[t].sampler;
@@ -1849,36 +1851,32 @@ void transition_image_layout(VkImage image, VkFormat format, VkImageLayout old_l
 	VkPipelineStageFlags src_stage;
 	VkPipelineStageFlags dst_stage;
 	
-	if (old_layout == VK_IMAGE_LAYOUT_UNDEFINED && new_layout == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL)
-	{
+	
+	if (old_layout == VK_IMAGE_LAYOUT_UNDEFINED && new_layout == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL){
 		barrier.srcAccessMask = 0;
 		barrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
 		
 		src_stage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
 		dst_stage = VK_PIPELINE_STAGE_TRANSFER_BIT;
-	}else if (old_layout == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL && new_layout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)
-	{
+	}else if (old_layout == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL && new_layout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL){
 		barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
 		barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
 		
 		src_stage = VK_PIPELINE_STAGE_TRANSFER_BIT;
 		dst_stage = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
-	}else if (old_layout == VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL && new_layout == VK_IMAGE_LAYOUT_PRESENT_SRC_KHR)
-	{
+	}else if (old_layout == VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL && new_layout == VK_IMAGE_LAYOUT_PRESENT_SRC_KHR){
 		barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
 		barrier.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
 		
 		src_stage = VK_PIPELINE_STAGE_TRANSFER_BIT;
 		dst_stage = VK_PIPELINE_STAGE_TRANSFER_BIT;
-	}else if (old_layout == VK_IMAGE_LAYOUT_UNDEFINED && new_layout == VK_IMAGE_LAYOUT_GENERAL)
-	{
+	}else if (old_layout == VK_IMAGE_LAYOUT_UNDEFINED && new_layout == VK_IMAGE_LAYOUT_GENERAL){
 		barrier.srcAccessMask = 0;
 		barrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
 		
 		src_stage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
 		dst_stage = VK_PIPELINE_STAGE_TRANSFER_BIT;
-	}else
-	{
+	}else {
 		barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
 		barrier.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
 		
@@ -1930,7 +1928,6 @@ void copy_buffer_to_image(VkBuffer buffer, VkImage image, u32 width, u32 height)
 #endif
 
 	
-		
 	vkCmdCopyBufferToImage(
 		command_buf,
 		buffer,
@@ -2202,13 +2199,17 @@ void render_cube_immediate(VkCommandBuffer command_buf, u32 image_index, Pipelin
 	
 }
 
-void render_def_vbo(VkCommandBuffer command_buf, u32 image_index, float *mvp, vec4 color, DataBuffer *vbo, DataBuffer *ibo, u32 index_offset)
+void render_def_vbo(VkCommandBuffer command_buf, u32 image_index, float *mvp, vec4 color, DataBuffer *vbo, DataBuffer *ibo, u32 index_offset, TextureObject *tex, f32 ww, f32 wh)
 {
     PipelineObject* p = &vl.def_pipe;
     VkDescriptorSetLayout layout = shader_create_descriptor_set_layout(&p->vert_shader, &p->frag_shader, 1);
     DataBuffer* uniform_buffer = create_uniform_buffers(&p->vert_shader.info, 1);
     TextureObject textures[] = { sample_texture, sample_texture2 };
-    VkDescriptorSet* desc_set = create_descriptor_sets(layout, &p->vert_shader, &p->frag_shader, p->descriptor_pools[image_index], uniform_buffer, textures, array_count(textures), 1);
+    VkDescriptorSet* desc_set;
+    if (tex)
+        desc_set = create_descriptor_sets(layout, &p->vert_shader, &p->frag_shader, p->descriptor_pools[image_index], uniform_buffer, tex, 1, 1);
+    else
+        desc_set = create_descriptor_sets(layout, &p->vert_shader, &p->frag_shader, p->descriptor_pools[image_index], uniform_buffer, textures, 1, 1);
 
     DataBuffer* buf = ubo_manager_get_next_buf(image_index);
     if (buf == NULL)return;
@@ -2231,8 +2232,15 @@ void render_def_vbo(VkCommandBuffer command_buf, u32 image_index, float *mvp, ve
 
     shader_set_immediate(&p->vert_shader.info, "WorldViewProj", mvp, data);
     shader_set_immediate(&p->vert_shader.info, "constColor", &color, data);
-
-
+    shader_set_immediate(&p->vert_shader.info, "ww", &ww, data);
+    shader_set_immediate(&p->vert_shader.info, "wh", &wh, data);
+    //whether the primitive is textured or not
+    f32 textured;
+    if (tex == NULL)
+        textured = 0.0f;
+    else
+        textured = 1.0f;
+    shader_set_immediate(&p->vert_shader.info, "textured", &textured, data);
 
     //copy uniform data to UBO
     VK_CHECK(buf_map(uniform_buffer, uniform_buffer->size, 0));
@@ -2352,7 +2360,7 @@ internal void create_texture_sampler(VkSampler *sampler)
 }
 
 //TODO(ilias): add mip-mapping + option for staging buffer + native linear encoding
-internal TextureObject create_texture_image(char *filename, VkFormat format)
+TextureObject create_texture_image(char *filename, VkFormat format)
 {
 	TextureObject tex;
 	//[0]: we read an image and store all the pixels in a pointer
@@ -2364,7 +2372,7 @@ internal TextureObject create_texture_image(char *filename, VkFormat format)
 	//[2]: we create a buffer to hold the pixel information (we also fill it)
 	DataBuffer idb;
 	if (!pixels)
-		vk_error("Error loading image %s!\n", filename);
+		vk_error("Error loading image %s!");
 	create_buffer(VK_BUFFER_USAGE_TRANSFER_SRC_BIT, 
 	(VkMemoryPropertyFlagBits)(VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT), &idb, image_size, pixels);
 	//[3]: we free the cpu side image, we don't need it
@@ -2397,6 +2405,13 @@ internal TextureObject create_texture_image(char *filename, VkFormat format)
 	return tex;
 }
 
+void texture_image_cleanup(TextureObject *t)
+{
+    vkDestroySampler(vl.device, t->sampler, NULL);
+    vkDestroyImageView(vl.device, t->view, NULL);
+    vkDestroyImage(vl.device, t->image, NULL);
+    vkFreeMemory(vl.device, t->device_mem, NULL);
+}
 internal void vulkan_layer_init(void)
 {
 #ifdef __cplusplus
@@ -2599,7 +2614,11 @@ void draw_frame(void)
     renderpass_info.pClearValues = clear_values;
 
     vkCmdBeginRenderPass(vl.command_buffers[vl.image_index], &renderpass_info, VK_SUBPASS_CONTENTS_INLINE);
+#ifdef EXEC
     mat4 m = mat4_mul(mat4_translate(v3(1.2 * sin(get_time()),0,-4)),m4d(1.f));
+#else
+	 mat4 m = mat4_mul(mat4_translate(v3(1.2,0,-4)),m4d(1.f));
+#endif
     render_cube_immediate(vl.command_buffers[vl.image_index], vl.image_index, &vl.base_pipe, m);
 	//render_fullscreen(vl.command_buffers[image_index], image_index);
 	vkCmdEndRenderPass(vl.command_buffers[vl.image_index]);
