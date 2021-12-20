@@ -2,7 +2,6 @@
 #include "tools.h"
 #include "stdlib.h"
 #include "string.h"
-
 #define EXEC
 #ifdef EXEC
 #define NOGLFW 1
@@ -292,6 +291,7 @@ typedef struct VulkanLayer
     VkPhysicalDevice physical_device;
     VkDevice device;
     VkSurfaceKHR surface;
+    VkDebugUtilsMessengerEXT debug_msg;
 
     VkQueue graphics_queue;
     VkQueue present_queue;
@@ -329,6 +329,8 @@ u32 get_format_size(ShaderVarFormat format)
 {
     switch(format)
     {
+        case SHADER_VAR_FORMAT_R32G32B32A32_SFLOAT:
+            return 4 * sizeof(f32);
         case SHADER_VAR_FORMAT_R32G32B32_SFLOAT:
             return 3 * sizeof(f32);
         case SHADER_VAR_FORMAT_R32G32_SFLOAT:
@@ -342,7 +344,7 @@ u32 get_format_size(ShaderVarFormat format)
 
 
 
-u32 calc_vertex_input_total_size(ShaderMetaInfo *info)
+u32 calc_vertex_input_total_size(ShaderMetaInfo* info)
 {
     u32 s = 0;
     for (u32 i = 0; i < info->vertex_input_attribute_count; ++i)
@@ -365,16 +367,16 @@ u32 get_attr_desc(VkVertexInputAttributeDescription *attr_desc, ShaderMetaInfo *
     u32 valid_attribs = 0;
     for (u32 i = 0; i < info->vertex_input_attribute_count; ++i)
     {
+        u32 location = info->vertex_input_attributes[i].location;
         for (u32 j = 0; j < info->vertex_input_attribute_count; ++j)
         {
-            u32 location = info->vertex_input_attributes[i].location;
-            if (location == i)
+            if (location == j)
             {
                 attr_desc[location].binding = 0;
                 attr_desc[location].location = location;
-                attr_desc[location].format = (VkFormat)info->vertex_input_attributes[i].format;
+                attr_desc[location].format = (VkFormat)info->vertex_input_attributes[j].format;
                 attr_desc[location].offset = global_offset;
-                global_offset+= info->vertex_input_attributes[i].size;
+                global_offset+= info->vertex_input_attributes[j].size;
                 valid_attribs++;
                 break;
             }
@@ -559,8 +561,8 @@ VkPipelineColorBlendAttachmentState pipe_color_blend_attachment_state(void)
 	color_blend_attachment.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
 		VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
 	color_blend_attachment.blendEnable = VK_FALSE;
-    color_blend_attachment.srcColorBlendFactor = VK_BLEND_FACTOR_ONE;
-    color_blend_attachment.dstColorBlendFactor = VK_BLEND_FACTOR_ZERO;
+    color_blend_attachment.srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA;
+    color_blend_attachment.dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
     color_blend_attachment.colorBlendOp = VK_BLEND_OP_ADD;
     color_blend_attachment.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
     color_blend_attachment.dstAlphaBlendFactor = VK_BLEND_FACTOR_ZERO;
@@ -767,8 +769,10 @@ void shader_reflect(u32 *shader_code, u32 code_size, ShaderMetaInfo *info)
     info->vertex_input_attribute_count = var_count;
     for (u32 i = 0; i < var_count; ++i)
     {
-        VertexInputAttribute *attr = &info->vertex_input_attributes[i];
-        SpvReflectInterfaceVariable *curvar = input_vars[i];
+        SpvReflectInterfaceVariable* curvar = input_vars[i];
+		if(curvar->location > 100 || curvar->location < 0)continue;
+        VertexInputAttribute *attr = &info->vertex_input_attributes[curvar->location];
+        
 
         attr->location = curvar->location;
         attr->format = (ShaderVarFormat)curvar->format;
@@ -926,7 +930,7 @@ const u32 enable_validation_layers= TRUE;
 const u32 enable_validation_layers = TRUE;
 #endif
 
-const char *device_extensions[] = {VK_KHR_SWAPCHAIN_EXTENSION_NAME}; 
+const char* device_extensions[] = { VK_KHR_SWAPCHAIN_EXTENSION_NAME };
 
 
 typedef struct UniformBufferObject
@@ -992,7 +996,7 @@ Vertex *cube_build_verts(void)
 	return verts;
 }
 
-
+/*
 //return the binding description of Vertex type vertex input
 VkVertexInputBindingDescription get_bind_desc_test_vert(void)
 {
@@ -1018,7 +1022,7 @@ void get_attr_desc_test_vert(VkVertexInputAttributeDescription *attr_desc)
     attr_desc[2].format = VK_FORMAT_R32G32_SFLOAT;
     attr_desc[2].offset = offsetof(Vertex, tex_coord);
 }
-
+*/
 typedef struct SwapChainSupportDetails
 {
     VkSurfaceCapabilitiesKHR capabilities;
@@ -1084,6 +1088,17 @@ u32 check_validation_layer_support(void){
 	return TRUE;
 }
 
+static VKAPI_ATTR VkBool32 VKAPI_CALL debugCB(
+    VkDebugUtilsMessageSeverityFlagBitsEXT messageSeverity,
+    VkDebugUtilsMessageTypeFlagsEXT messageType,
+    const VkDebugUtilsMessengerCallbackDataEXT* pCallbackData,
+    void* pUserData) {
+    if (messageSeverity > VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT)
+        printf("validation layer: %s\n", pCallbackData->pMessage);
+
+    return VK_FALSE;
+}
+
 void vl_create_instance(void) {
 	if (enable_validation_layers&&(check_validation_layer_support()==0))
 		vk_error("Validation layers requested, but not available!");
@@ -1105,6 +1120,7 @@ void vl_create_instance(void) {
     char *base_extensions[] = {
 		"VK_KHR_surface",
 		"VK_KHR_win32_surface",
+        VK_EXT_DEBUG_UTILS_EXTENSION_NAME
 	};
 	//vl.instance_extensions = window_get_required_vl.instance_extensions(&wnd, &vl.instance_ext_count);
     
@@ -1127,6 +1143,36 @@ void vl_create_instance(void) {
     */
 }
 
+VkResult CreateDebugUtilsMessengerEXT(VkInstance instance, const VkDebugUtilsMessengerCreateInfoEXT* pCreateInfo, const VkAllocationCallbacks* pAllocator, VkDebugUtilsMessengerEXT* pDebugMessenger) {
+    PFN_vkCreateDebugUtilsMessengerEXT func = (PFN_vkCreateDebugUtilsMessengerEXT)vkGetInstanceProcAddr(instance, "vkCreateDebugUtilsMessengerEXT");
+    if (func != NULL) {
+        return func(instance, pCreateInfo, pAllocator, pDebugMessenger);
+    }
+    else {
+        return VK_ERROR_EXTENSION_NOT_PRESENT;
+    }
+}
+
+void DestroyDebugUtilsMessengerEXT(VkInstance instance, VkDebugUtilsMessengerEXT debugMessenger, const VkAllocationCallbacks* pAllocator) {
+    PFN_vkDestroyDebugUtilsMessengerEXT func = (PFN_vkDestroyDebugUtilsMessengerEXT) vkGetInstanceProcAddr(instance, "vkDestroyDebugUtilsMessengerEXT");
+    if (func != NULL) {
+        func(instance, debugMessenger, pAllocator);
+    }
+}
+
+internal void vl_setup_debug_messenger(void)
+{
+    VkDebugUtilsMessengerCreateInfoEXT create_info = {0};
+    create_info.sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT;
+    create_info.messageSeverity = VK_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT | VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT | VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT;
+    create_info.messageType = VK_DEBUG_UTILS_MESSAGE_TYPE_GENERAL_BIT_EXT | VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT | VK_DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT;
+    create_info.pfnUserCallback = debugCB;
+    create_info.pUserData = NULL; // Optional
+
+    if (CreateDebugUtilsMessengerEXT(vl.instance, &create_info, NULL, &vl.debug_msg) != VK_SUCCESS) {
+        printf("failed to set up debug messenger!\n");
+    }
+}
 
 
 typedef struct QueueFamilyIndices
@@ -2105,9 +2151,10 @@ internal void pipeline_cleanup(PipelineObject *pipe)
 
 internal void vl_base_pipelines_init(void)
 {
-
-    pipeline_build_basic(&vl.fullscreen_pipe, "fullscreen.vert", "fullscreen.frag", RPRIMITIVE_TOPOLOGY_TRIANGLE_LIST);
+#ifdef EXEC
+    //pipeline_build_basic(&vl.fullscreen_pipe, "fullscreen.vert", "fullscreen.frag", RPRIMITIVE_TOPOLOGY_TRIANGLE_LIST);
     pipeline_build_basic(&vl.base_pipe, "base.vert", "base.frag", RPRIMITIVE_TOPOLOGY_TRIANGLE_LIST);
+#endif
     pipeline_build_basic(&vl.def_pipe, "def.vert", "def.frag", RPRIMITIVE_TOPOLOGY_TRIANGLE_LIST);
 }
 
@@ -2420,6 +2467,7 @@ internal void vulkan_layer_init(void)
 	vl = (VulkanLayer){0};
 #endif
 	vl_create_instance();
+    vl_setup_debug_messenger();
     create_surface();
     vl_pick_physical_device();
     vl_create_logical_device();
@@ -2487,7 +2535,9 @@ void frame_start(void)
 
 
     ubo_manager_reset(vl.image_index);
+#ifdef EXEC
     vkResetDescriptorPool(vl.device, vl.base_pipe.descriptor_pools[vl.image_index], NULL);
+#endif
     vkResetDescriptorPool(vl.device, vl.def_pipe.descriptor_pools[vl.image_index], NULL);
     VK_CHECK(vkResetCommandBuffer(vl.command_buffers[vl.image_index], VK_COMMAND_BUFFER_RESET_RELEASE_RESOURCES_BIT));
         
@@ -2685,6 +2735,7 @@ internal void cleanup(void)
     vkDestroyCommandPool(vl.device, vl.command_pool, NULL);
     vkDestroyDevice(vl.device, NULL);
     vkDestroySurfaceKHR(vl.instance, vl.surface, NULL);
+    DestroyDebugUtilsMessengerEXT(vl.instance, vl.debug_msg, NULL);
     vkDestroyInstance(vl.instance, NULL);
 	//window_destroy(&wnd);
 }
