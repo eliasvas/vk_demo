@@ -339,7 +339,7 @@ u32 get_attr_desc(VkVertexInputAttributeDescription *attr_desc, ShaderMetaInfo *
 }
 
 
-internal void cleanup_fbo_attachment(FrameBufferAttachment *a)
+void cleanup_fbo_attachment(FrameBufferAttachment *a)
 {
 	for (u32 i = 0; i <a->image_count; ++i)
 	{
@@ -351,7 +351,7 @@ internal void cleanup_fbo_attachment(FrameBufferAttachment *a)
 }
 
 
-internal void fbo_cleanup(FrameBufferObject *fbo)
+void fbo_cleanup(FrameBufferObject *fbo)
 {
 
 	u32 attachment_count = minimum(4, fbo->attachment_count);
@@ -1095,7 +1095,7 @@ void DestroyDebugUtilsMessengerEXT(VkInstance instance, VkDebugUtilsMessengerEXT
     }
 }
 
-internal void vl_setup_debug_messenger(void)
+void vl_setup_debug_messenger(void)
 {
     VkDebugUtilsMessengerCreateInfoEXT create_info = {0};
     create_info.sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT;
@@ -1244,7 +1244,7 @@ VkExtent2D choose_swap_extent(SwapChainSupportDetails details)
         return actual_extent;
     }
 }
-internal FrameBufferAttachment create_depth_attachment(u32 width, u32 height);
+FrameBufferAttachment create_depth_attachment(u32 width, u32 height);
 VkRenderPass create_render_pass(VkAttachmentLoadOp load_op,VkImageLayout initial, 
           VkImageLayout final, u32 color_attachment_count, b32 depth_attachment_active);
 void vl_create_swapchain(void)
@@ -1920,11 +1920,11 @@ void copy_buffer_to_image(VkBuffer buffer, VkImage image, u32 width, u32 height)
 }
 
 //checks whether our depth format has a stencil component
-internal u32 has_stencil_component(VkFormat format)
+u32 has_stencil_component(VkFormat format)
 {
 	return format == VK_FORMAT_D32_SFLOAT_S8_UINT || format == VK_FORMAT_D24_UNORM_S8_UINT;
 }
-internal VkFormat find_depth_format(void)
+VkFormat find_depth_format(void)
 {	VkFormat c[] = {VK_FORMAT_D32_SFLOAT, VK_FORMAT_D32_SFLOAT_S8_UINT, VK_FORMAT_D24_UNORM_S8_UINT};
 	return find_supported_format(
                                  c,
@@ -1936,7 +1936,7 @@ internal VkFormat find_depth_format(void)
 
 
 
-internal FrameBufferAttachment create_depth_attachment(u32 width, u32 height)
+FrameBufferAttachment create_depth_attachment(u32 width, u32 height)
 {
 #ifdef __cplusplus
 	FrameBufferAttachment depth_attachment = {};
@@ -1957,7 +1957,7 @@ internal FrameBufferAttachment create_depth_attachment(u32 width, u32 height)
 
 
 
-internal FrameBufferAttachment create_color_attachment(u32 width, u32 height, VkFormat format)
+FrameBufferAttachment create_color_attachment(u32 width, u32 height, VkFormat format)
 {
 #ifdef __cplusplus
 	FrameBufferAttachment color_attachment = {};
@@ -1982,7 +1982,7 @@ internal FrameBufferAttachment create_color_attachment(u32 width, u32 height, Vk
 }
 
 
-internal void fbo_init(FrameBufferObject *fbo)
+void fbo_init(FrameBufferObject *fbo)
 {
 	fbo->width = vl.swap.extent.width;
 	fbo->height = vl.swap.extent.height;
@@ -2016,7 +2016,7 @@ internal void fbo_init(FrameBufferObject *fbo)
 	}
 }
 
-internal DataBuffer *create_uniform_buffers(ShaderMetaInfo *info, u32 buffer_count) //=vl.swap.image_count
+DataBuffer *create_uniform_buffers(ShaderMetaInfo *info, u32 buffer_count) //=vl.swap.image_count
 {
     VkDeviceSize buf_size = info->descriptor_bindings[0].mem_size;
     DataBuffer *uni_buffers = (DataBuffer*)malloc(sizeof(DataBuffer) * vl.swap.image_count);
@@ -2029,7 +2029,35 @@ internal DataBuffer *create_uniform_buffers(ShaderMetaInfo *info, u32 buffer_cou
     return uni_buffers;
 }
 
-internal void pipeline_build_basic(PipelineObject *p,const char *vert, const char *frag, VkPrimitiveTopology topology)
+void pipeline_build_basic_no_reflect(PipelineObject *p,const char *vert, const char *frag, VkPrimitiveTopology topology)
+{
+
+#ifdef __cplusplus
+    PipelineBuilder pb = {};
+#else
+	PipelineBuilder pb = {0};
+#endif
+    //read shaders and register them in the pipeline builder
+	shader_create(vl.device, &p->vert_shader, vert, VK_SHADER_STAGE_VERTEX_BIT); 
+	shader_create(vl.device, &p->frag_shader, frag, VK_SHADER_STAGE_FRAGMENT_BIT);
+	pb.shader_stages_count = 2;
+	pb.shader_stages[0] = pipe_shader_stage_create_info(p->vert_shader.stage, p->vert_shader.module);
+	pb.shader_stages[1] = pipe_shader_stage_create_info(p->frag_shader.stage, p->frag_shader.module);
+
+	pb.input_asm = pipe_input_assembly_create_info((VkPrimitiveTopology)topology);
+	pb.rasterizer = pipe_rasterization_state_create_info(VK_POLYGON_MODE_FILL);
+	pb.multisampling = pipe_multisampling_state_create_info();
+	pb.color_blend_attachment = pipe_color_blend_attachment_state();
+
+    VkDescriptorSetLayout layout = shader_create_descriptor_set_layout(&p->vert_shader, &p->frag_shader, 1);
+    VkPipelineLayoutCreateInfo info = pipe_layout_create_info(&layout, 1);
+	VK_CHECK(vkCreatePipelineLayout(vl.device, &info, NULL, &pb.pipeline_layout));
+	VK_CHECK(vkCreatePipelineLayout(vl.device, &info, NULL, &p->pipeline_layout));
+	p->pipeline = build_pipeline(vl.device, pb, vl.render_pass_basic);
+}
+
+
+void pipeline_build_basic(PipelineObject *p,const char *vert, const char *frag, VkPrimitiveTopology topology)
 {
 
     VkVertexInputBindingDescription bind_desc;
@@ -2069,7 +2097,7 @@ internal void pipeline_build_basic(PipelineObject *p,const char *vert, const cha
 }
 
 //releases ALL pipeline resources
-internal void pipeline_cleanup(PipelineObject *pipe)
+void pipeline_cleanup(PipelineObject *pipe)
 {
 	vkDestroyPipeline(vl.device, pipe->pipeline, NULL);
     vkDestroyPipelineLayout(vl.device, pipe->pipeline_layout, NULL);
@@ -2082,10 +2110,10 @@ internal void pipeline_cleanup(PipelineObject *pipe)
 	//vkDestroyDescriptorSetLayout(device, pipe->descriptor_set_layout, NULL);
 }
 
-internal void vl_base_pipelines_init(void)
+void vl_base_pipelines_init(void)
 {
 #ifdef EXEC
-    //pipeline_build_basic(&vl.fullscreen_pipe, "fullscreen.vert", "fullscreen.frag", RPRIMITIVE_TOPOLOGY_TRIANGLE_LIST);
+    pipeline_build_basic_no_reflect(&vl.fullscreen_pipe, "fullscreen.vert", "fullscreen.frag", VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST);
     pipeline_build_basic(&vl.base_pipe, "base.vert", "base.frag", VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST);
 #endif
     pipeline_build_basic(&vl.def_pipe, "def.vert", "def.frag", VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST);
@@ -2101,7 +2129,7 @@ typedef struct UniformBufferManager
 }UniformBufferManager;
 UniformBufferManager ubo_manager;
 
-internal void ubo_manager_init(u32 buffer_count)
+void ubo_manager_init(u32 buffer_count)
 {
     ubo_manager.buffers_per_swap_image = buffer_count;
     ubo_manager.swap_image_count = vl.swap.image_count;
@@ -2113,13 +2141,13 @@ internal void ubo_manager_init(u32 buffer_count)
         ubo_manager.uniform_buffers[i] = (DataBuffer*)malloc(sizeof(DataBuffer) * ubo_manager.buffers_per_swap_image);
     }
 }
-internal DataBuffer *ubo_manager_get_next_buf(u32 image_index)
+DataBuffer *ubo_manager_get_next_buf(u32 image_index)
 {
     if(ubo_manager.indices[image_index] >= ubo_manager.buffers_per_swap_image)return NULL;
     u32 buffer_index = ubo_manager.indices[image_index]++;
     return &ubo_manager.uniform_buffers[image_index][buffer_index];
 }
-internal void ubo_manager_reset(u32 image_index)
+void ubo_manager_reset(u32 image_index)
 {
     u32 last_active_index = ubo_manager.indices[image_index] - 1;
     //printf("last active index: %i\n", last_active_index);
@@ -2237,7 +2265,7 @@ void render_def_vbo(VkCommandBuffer command_buf, u32 image_index, float *mvp, ve
 
 
 
-internal void create_sync_objects(void)
+void create_sync_objects(void)
 {
     image_available_semaphores = (VkSemaphore*)malloc(sizeof(VkSemaphore) * MAX_FRAMES_IN_FLIGHT);
     render_finished_semaphores = (VkSemaphore*)malloc(sizeof(VkSemaphore) * MAX_FRAMES_IN_FLIGHT);
@@ -2260,7 +2288,7 @@ internal void create_sync_objects(void)
     }
 }
 
-internal void create_surface(void)
+void create_surface(void)
 {
 #ifdef EXEC
 	window_create_window_surface(vl.instance, &wnd, &vl.surface);
@@ -2273,9 +2301,9 @@ internal void create_surface(void)
 #endif
 }
 
-internal void framebuffer_resize_callback(void){framebuffer_resized = TRUE;}
+void framebuffer_resize_callback(void){framebuffer_resized = TRUE;}
 
-internal void vl_cleanup_swapchain(void)
+void vl_cleanup_swapchain(void)
 {
     for (u32 i = 0; i < vl.swap.image_count; ++i)
         vkDestroyFramebuffer(vl.device, vl.swap.framebuffers[i], NULL);
@@ -2288,7 +2316,7 @@ internal void vl_cleanup_swapchain(void)
 	vkDestroyRenderPass(vl.device, vl.swap.rp_end, NULL);
 }
 
-internal void vl_recreate_swapchain(void)
+void vl_recreate_swapchain(void)
 {
     //in case of window minimization (w = 0, h = 0) we wait until we get a proper window again
     u32 width = 0, height = 0;
@@ -2313,7 +2341,7 @@ internal void vl_recreate_swapchain(void)
     vl_create_command_buffers();
 }
 
-internal void create_texture_sampler(VkSampler *sampler)
+void create_texture_sampler(VkSampler *sampler)
 {
 	VkSamplerCreateInfo sampler_info = {0};
 	sampler_info.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
@@ -2603,7 +2631,7 @@ void draw_frame(void)
 	 mat4 m = mat4_mul(mat4_translate(v3(1.2,0,-4)),m4d(1.f));
 #endif
     render_cube_immediate(vl.command_buffers[vl.image_index], vl.image_index, &vl.base_pipe, m);
-	//render_fullscreen(vl.command_buffers[image_index], image_index);
+	render_fullscreen(vl.command_buffers[vl.image_index], vl.image_index);
 	vkCmdEndRenderPass(vl.command_buffers[vl.image_index]);
 
     vkCmdBeginRenderPass(vl.command_buffers[vl.image_index], &renderpass_info, VK_SUBPASS_CONTENTS_INLINE);
@@ -2621,7 +2649,7 @@ void draw_frame(void)
 f32 nb_frames = 0.0f;
 f32 current_time = 0.0f;
 f32 prev_time = 0.0f;
-internal void calc_fps(void)
+void calc_fps(void)
 {
     f32 current_time = get_time();
     f32 delta = current_time - prev_time;
@@ -2635,7 +2663,7 @@ internal void calc_fps(void)
         prev_time = current_time;
     }
 }
-internal void main_loop(void)
+void main_loop(void)
 {
     
 	while (!window_should_close(&wnd)) {
@@ -2649,7 +2677,7 @@ internal void main_loop(void)
 #endif
 
 
-internal void cleanup(void)
+void cleanup(void)
 {
     vkDeviceWaitIdle(vl.device);  //so we dont close the window while commands are still being executed
     vl_cleanup_swapchain();

@@ -19,7 +19,7 @@ void main()
 {
 
 	gl_Position = ubo.WorldViewProj * vec4(g_vPosition, 1.0);
-	gl_Position.xy /= vec2(ubo.ww, ubo.wh) + g_vPosition.xy;
+	gl_Position.xy /= vec2(ubo.ww, ubo.wh);
 	gl_Position.y *= -1.0;
 	gl_Position.xy = gl_Position.xy * 2 - vec2(1,1);
 	g_vVSColor = ubo.constColor;
