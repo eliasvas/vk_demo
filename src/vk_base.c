@@ -2,6 +2,7 @@
 #include "tools.h"
 #include "stdlib.h"
 #include "string.h"
+
 #define EXEC
 #ifdef EXEC
 #define NOGLFW 1
@@ -97,34 +98,6 @@ typedef struct FrameBufferObject
 
 
 
-typedef enum ShaderVarFormat{
-  SHADER_VAR_FORMAT_UNDEFINED           =   0, // = VK_FORMAT_UNDEFINED
-  SHADER_VAR_FORMAT_R32_UINT            =  98, // = VK_FORMAT_R32_UINT
-  SHADER_VAR_FORMAT_R32_SINT            =  99, // = VK_FORMAT_R32_SINT
-  SHADER_VAR_FORMAT_R32_SFLOAT          = 100, // = VK_FORMAT_R32_SFLOAT
-  SHADER_VAR_FORMAT_R32G32_UINT         = 101, // = VK_FORMAT_R32G32_UINT
-  SHADER_VAR_FORMAT_R32G32_SINT         = 102, // = VK_FORMAT_R32G32_SINT
-  SHADER_VAR_FORMAT_R32G32_SFLOAT       = 103, // = VK_FORMAT_R32G32_SFLOAT
-  SHADER_VAR_FORMAT_R32G32B32_UINT      = 104, // = VK_FORMAT_R32G32B32_UINT
-  SHADER_VAR_FORMAT_R32G32B32_SINT      = 105, // = VK_FORMAT_R32G32B32_SINT
-  SHADER_VAR_FORMAT_R32G32B32_SFLOAT    = 106, // = VK_FORMAT_R32G32B32_SFLOAT
-  SHADER_VAR_FORMAT_R32G32B32A32_UINT   = 107, // = VK_FORMAT_R32G32B32A32_UINT
-  SHADER_VAR_FORMAT_R32G32B32A32_SINT   = 108, // = VK_FORMAT_R32G32B32A32_SINT
-  SHADER_VAR_FORMAT_R32G32B32A32_SFLOAT = 109, // = VK_FORMAT_R32G32B32A32_SFLOAT
-  SHADER_VAR_FORMAT_R64_UINT            = 110, // = VK_FORMAT_R64_UINT
-  SHADER_VAR_FORMAT_R64_SINT            = 111, // = VK_FORMAT_R64_SINT
-  SHADER_VAR_FORMAT_R64_SFLOAT          = 112, // = VK_FORMAT_R64_SFLOAT
-  SHADER_VAR_FORMAT_R64G64_UINT         = 113, // = VK_FORMAT_R64G64_UINT
-  SHADER_VAR_FORMAT_R64G64_SINT         = 114, // = VK_FORMAT_R64G64_SINT
-  SHADER_VAR_FORMAT_R64G64_SFLOAT       = 115, // = VK_FORMAT_R64G64_SFLOAT
-  SHADER_VAR_FORMAT_R64G64B64_UINT      = 116, // = VK_FORMAT_R64G64B64_UINT
-  SHADER_VAR_FORMAT_R64G64B64_SINT      = 117, // = VK_FORMAT_R64G64B64_SINT
-  SHADER_VAR_FORMAT_R64G64B64_SFLOAT    = 118, // = VK_FORMAT_R64G64B64_SFLOAT
-  SHADER_VAR_FORMAT_R64G64B64A64_UINT   = 119, // = VK_FORMAT_R64G64B64A64_UINT
-  SHADER_VAR_FORMAT_R64G64B64A64_SINT   = 120, // = VK_FORMAT_R64G64B64A64_SINT
-  SHADER_VAR_FORMAT_R64G64B64A64_SFLOAT = 121, // = VK_FORMAT_R64G64B64A64_SFLOAT
-} ShaderVarFormat;
-
 typedef enum ShaderReflectTypeFlagBits{
   SHADER_REFLECT_TYPE_FLAG_UNDEFINED                       = 0x00000000,
   SHADER_REFLECT_TYPE_FLAG_VOID                            = 0x00000001,
@@ -160,30 +133,6 @@ typedef struct ShaderReflectNumTraits{
   } matrix;
 } ShaderReflectNumTraits;
 
-typedef enum ShaderDescType{
-  SHADER_DESC_TYPE_SAMPLER                    =  0,        // = VK_DESCRIPTOR_TYPE_SAMPLER
-  SHADER_DESC_TYPE_COMBINED_IMAGE_SAMPLER     =  1,        // = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER
-  SHADER_DESC_TYPE_SAMPLED_IMAGE              =  2,        // = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE
-  SHADER_DESC_TYPE_STORAGE_IMAGE              =  3,        // = VK_DESCRIPTOR_TYPE_STORAGE_IMAGE
-  SHADER_DESC_TYPE_UNIFORM_TEXEL_BUFFER       =  4,        // = VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER
-  SHADER_DESC_TYPE_STORAGE_TEXEL_BUFFER       =  5,        // = VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER
-  SHADER_DESC_TYPE_UNIFORM_BUFFER             =  6,        // = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER
-  SHADER_DESC_TYPE_STORAGE_BUFFER             =  7,        // = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER
-  SHADER_DESC_TYPE_UNIFORM_BUFFER_DYNAMIC     =  8,        // = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC
-  SHADER_DESC_TYPE_STORAGE_BUFFER_DYNAMIC     =  9,        // = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC
-  SHADER_DESC_TYPE_INPUT_ATTACHMENT           = 10,        // = VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT
-  SHADER_DESC_TYPE_ACCELERATION_STRUCTURE_KHR = 1000150000 // = VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR
-} ShaderDescType;
-
-typedef enum RPrimitiveTopology{
-    RPRIMITIVE_TOPOLOGY_POINT_LIST = 0, // =VK_PRIMITIVE_TOPOLOGY_POINT_LIST 
-    RPRIMITIVE_TOPOLOGY_LINE_LIST = 1, // =VK_PRIMITIVE_TOPOLOGY_LINE_LIST 
-    RPRIMITIVE_TOPOLOGY_LINE_STRIP = 2, // =VK_PRIMITIVE_TOPOLOGY_LINE_STRIP 
-    RPRIMITIVE_TOPOLOGY_TRIANGLE_LIST = 3, // =VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST
-    RPRIMITIVE_TOPOLOGY_TRIANGLE_STRIP = 4, // =VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP 
-    RPRIMITIVE_TOPOLOGY_TRIANGLE_FAN = 5, // =VK_PRIMITIVE_TOPOLOGY_TRIANGLE_FAN 
-} RPrimitiveTopology;
-
 typedef struct UniformVariable
 {
     char name[64];
@@ -205,7 +154,7 @@ typedef struct ShaderDescriptorBinding
     void *mem;
     u32 mem_size;
 
-    ShaderDescType desc_type; //ubo/image sampler etc..
+    VkDescriptorType desc_type; //ubo/image sampler etc..
 }ShaderDescriptorBinding;
 
 typedef struct DataBuffer
@@ -229,7 +178,7 @@ typedef struct VertexInputAttribute
     b32 builtin;
     u32 array_count;
     u32 size; //size of attribute in bytes
-    ShaderVarFormat format;
+    VkFormat format;
 }VertexInputAttribute;
 
 
@@ -312,6 +261,7 @@ typedef struct VulkanLayer
 
     PipelineObject fullscreen_pipe;
     PipelineObject def_pipe;
+    //PipelineObject def_pipe_line;
     PipelineObject base_pipe;
 
     u32 image_index; //current image index to draw
@@ -325,17 +275,17 @@ extern VulkanLayer vl;
 #endif
 
 //TODO: finish this or find another way to infer size of a shader variable
-u32 get_format_size(ShaderVarFormat format)
+u32 get_format_size(VkFormat format)
 {
     switch(format)
     {
-        case SHADER_VAR_FORMAT_R32G32B32A32_SFLOAT:
+        case VK_FORMAT_R32G32B32A32_SFLOAT:
             return 4 * sizeof(f32);
-        case SHADER_VAR_FORMAT_R32G32B32_SFLOAT:
+        case VK_FORMAT_R32G32B32_SFLOAT:
             return 3 * sizeof(f32);
-        case SHADER_VAR_FORMAT_R32G32_SFLOAT:
+        case VK_FORMAT_R32G32_SFLOAT:
             return 2 * sizeof(f32);
-        case SHADER_VAR_FORMAT_R32_SFLOAT:
+        case VK_FORMAT_R32_SFLOAT:
             return sizeof(f32);
         default:
             return 0;
@@ -610,7 +560,7 @@ VkPipeline build_pipeline(VkDevice device, PipelineBuilder p,VkRenderPass render
     depth_stencil.depthTestEnable = VK_FALSE;
 #endif
 	depth_stencil.depthWriteEnable = VK_TRUE;
-	depth_stencil.depthCompareOp = VK_COMPARE_OP_LESS;
+	depth_stencil.depthCompareOp = VK_COMPARE_OP_LESS_OR_EQUAL;
 	depth_stencil.depthBoundsTestEnable = VK_FALSE;
 	depth_stencil.minDepthBounds = 0.0f;
 	depth_stencil.maxDepthBounds = 1.0f;
@@ -647,6 +597,16 @@ VkPipeline build_pipeline(VkDevice device, PipelineBuilder p,VkRenderPass render
     color_attachment.finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
 	color_blending.pAttachments = &p.color_blend_attachment;
 	
+
+    VkDynamicState dynamic_state_enables[] =
+    { VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_LINE_WIDTH, VK_DYNAMIC_STATE_BLEND_CONSTANTS };
+    VkPipelineDynamicStateCreateInfo dynamic_state = { 0 };
+    dynamic_state.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
+    dynamic_state.pNext = NULL;
+    dynamic_state.flags = NULL;
+    dynamic_state.dynamicStateCount = array_count(dynamic_state_enables);
+    dynamic_state.pDynamicStates = dynamic_state_enables;
+
 	
 	VkGraphicsPipelineCreateInfo pipeline_info = {0};
 	pipeline_info.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
@@ -660,10 +620,12 @@ VkPipeline build_pipeline(VkDevice device, PipelineBuilder p,VkRenderPass render
 	pipeline_info.pMultisampleState = &p.multisampling;
 	pipeline_info.pColorBlendState = &color_blending;
 	pipeline_info.pDepthStencilState = &depth_stencil;
+    //pipeline_info.pDynamicState = &dynamic_state;
 	pipeline_info.layout = p.pipeline_layout;
 	pipeline_info.renderPass = render_pass;
 	pipeline_info.subpass = 0;
 	pipeline_info.basePipelineHandle = VK_NULL_HANDLE;
+
 	VkPipeline new_pipeline;
 	if (vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &pipeline_info, NULL, &new_pipeline)!=VK_SUCCESS)
 		printf("Error creating some pipeline!\n");
@@ -775,7 +737,7 @@ void shader_reflect(u32 *shader_code, u32 code_size, ShaderMetaInfo *info)
         
 
         attr->location = curvar->location;
-        attr->format = (ShaderVarFormat)curvar->format;
+        attr->format = (VkFormat)curvar->format;
         attr->builtin = curvar->built_in;
 
         if (curvar->array.dims_count > 0)attr->array_count = curvar->array.dims[0];
@@ -805,7 +767,7 @@ void shader_reflect(u32 *shader_code, u32 code_size, ShaderMetaInfo *info)
 
             desc_binding->binding = desc_info->binding;
             desc_binding->set = desc_info->set;
-            desc_binding->desc_type = (ShaderDescType)desc_info->descriptor_type;
+            desc_binding->desc_type = (VkDescriptorType)desc_info->descriptor_type;
             sprintf(desc_binding->name, desc_info->name);
 
             SpvReflectTypeDescription *uniform_struct_desc = desc_info->type_description;
@@ -996,33 +958,6 @@ Vertex *cube_build_verts(void)
 	return verts;
 }
 
-/*
-//return the binding description of Vertex type vertex input
-VkVertexInputBindingDescription get_bind_desc_test_vert(void)
-{
-    VkVertexInputBindingDescription bind_desc = {0};
-    bind_desc.binding = 0;
-    bind_desc.stride = sizeof(Vertex);
-    bind_desc.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;//per-vertex
-    return bind_desc;
-}
-
-void get_attr_desc_test_vert(VkVertexInputAttributeDescription *attr_desc)
-{
-    attr_desc[0].binding = 0;
-    attr_desc[0].location = 0;
-    attr_desc[0].format = VK_FORMAT_R32G32B32_SFLOAT;
-    attr_desc[0].offset = offsetof(Vertex, pos);
-    attr_desc[1].binding = 0;
-    attr_desc[1].location = 1;
-    attr_desc[1].format = VK_FORMAT_R32G32B32_SFLOAT;
-    attr_desc[1].offset = offsetof(Vertex, normal);
-	attr_desc[2].binding = 0;
-    attr_desc[2].location = 2;
-    attr_desc[2].format = VK_FORMAT_R32G32_SFLOAT;
-    attr_desc[2].offset = offsetof(Vertex, tex_coord);
-}
-*/
 typedef struct SwapChainSupportDetails
 {
     VkSurfaceCapabilitiesKHR capabilities;
@@ -1493,7 +1428,7 @@ VkDescriptorSet *create_descriptor_sets(VkDescriptorSetLayout layout, ShaderObje
             desc_write.descriptorType = (VkDescriptorType)vert->info.descriptor_bindings[i].desc_type;
             desc_write.descriptorCount = 1;
 
-            if (vert->info.descriptor_bindings[i].desc_type == SHADER_DESC_TYPE_UNIFORM_BUFFER)
+            if (vert->info.descriptor_bindings[i].desc_type == VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER)
                 desc_write.pBufferInfo = &buffer_info;
             else
                 desc_write.pImageInfo = &image_infos[global_image_index++];
@@ -1504,8 +1439,6 @@ VkDescriptorSet *create_descriptor_sets(VkDescriptorSetLayout layout, ShaderObje
         {
 			VkWriteDescriptorSet desc_write = {0};
 			if (frag->info.descriptor_bindings[i].binding == 0)continue; //@NOTE: this is to ignore default UBO description in fragment shader parsing
-       
-			
             desc_write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
             desc_write.dstSet = desc_sets[j];
             desc_write.dstBinding = frag->info.descriptor_bindings[i].binding;
@@ -1513,7 +1446,7 @@ VkDescriptorSet *create_descriptor_sets(VkDescriptorSetLayout layout, ShaderObje
             desc_write.descriptorType =(VkDescriptorType)frag->info.descriptor_bindings[i].desc_type;
             desc_write.descriptorCount = 1;
 
-            if (frag->info.descriptor_bindings[i].desc_type == SHADER_DESC_TYPE_UNIFORM_BUFFER)
+            if (frag->info.descriptor_bindings[i].desc_type == VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER)
                 desc_write.pBufferInfo = &buffer_info;
             else
                 desc_write.pImageInfo = &image_infos[global_image_index++];
@@ -2096,7 +2029,7 @@ internal DataBuffer *create_uniform_buffers(ShaderMetaInfo *info, u32 buffer_cou
     return uni_buffers;
 }
 
-internal void pipeline_build_basic(PipelineObject *p,const char *vert, const char *frag, RPrimitiveTopology topology)
+internal void pipeline_build_basic(PipelineObject *p,const char *vert, const char *frag, VkPrimitiveTopology topology)
 {
 
     VkVertexInputBindingDescription bind_desc;
@@ -2153,9 +2086,9 @@ internal void vl_base_pipelines_init(void)
 {
 #ifdef EXEC
     //pipeline_build_basic(&vl.fullscreen_pipe, "fullscreen.vert", "fullscreen.frag", RPRIMITIVE_TOPOLOGY_TRIANGLE_LIST);
-    pipeline_build_basic(&vl.base_pipe, "base.vert", "base.frag", RPRIMITIVE_TOPOLOGY_TRIANGLE_LIST);
+    pipeline_build_basic(&vl.base_pipe, "base.vert", "base.frag", VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST);
 #endif
-    pipeline_build_basic(&vl.def_pipe, "def.vert", "def.frag", RPRIMITIVE_TOPOLOGY_TRIANGLE_LIST);
+    pipeline_build_basic(&vl.def_pipe, "def.vert", "def.frag", VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST);
 }
 
 typedef struct UniformBufferManager
@@ -2246,7 +2179,7 @@ void render_cube_immediate(VkCommandBuffer command_buf, u32 image_index, Pipelin
 	
 }
 
-void render_def_vbo(VkCommandBuffer command_buf, u32 image_index, float *mvp, vec4 color, DataBuffer *vbo, DataBuffer *ibo, u32 index_offset, TextureObject *tex, f32 ww, f32 wh)
+void render_def_vbo(VkCommandBuffer command_buf, u32 image_index, float *mvp, vec4 color, DataBuffer *vbo, DataBuffer *ibo,u32 vertex_offset, u32 index_offset, TextureObject *tex, f32 ww, f32 wh)
 {
     PipelineObject* p = &vl.def_pipe;
     VkDescriptorSetLayout layout = shader_create_descriptor_set_layout(&p->vert_shader, &p->frag_shader, 1);
@@ -2269,9 +2202,9 @@ void render_def_vbo(VkCommandBuffer command_buf, u32 image_index, float *mvp, ve
     vkCmdBindPipeline(command_buf, VK_PIPELINE_BIND_POINT_GRAPHICS, p->pipeline);
 
     VkBuffer vertex_buffers[] = { vbo->buffer };
-    VkDeviceSize offsets[] = { 0 };
+    VkDeviceSize offsets[] = { vertex_offset };
     vkCmdBindVertexBuffers(command_buf, 0, 1, vertex_buffers, offsets);
-    vkCmdBindIndexBuffer(command_buf, ibo->buffer, 0, VK_INDEX_TYPE_UINT32);
+    vkCmdBindIndexBuffer(command_buf, ibo->buffer, index_offset, VK_INDEX_TYPE_UINT32);
 
 
 
@@ -2298,7 +2231,7 @@ void render_def_vbo(VkCommandBuffer command_buf, u32 image_index, float *mvp, ve
     vkCmdBindDescriptorSets(vl.command_buffers[image_index], VK_PIPELINE_BIND_POINT_GRAPHICS,
         p->pipeline_layout, 0, 1, desc_set, 0, NULL);
 
-    vkCmdDrawIndexed(command_buf, ibo->size / sizeof(u32), 1, index_offset, 0, 0);
+    vkCmdDrawIndexed(command_buf, ibo->size / sizeof(u32), 1, 0,0, 0);
 
 }
 
@@ -2459,7 +2392,7 @@ void texture_image_cleanup(TextureObject *t)
     vkDestroyImage(vl.device, t->image, NULL);
     vkFreeMemory(vl.device, t->device_mem, NULL);
 }
-internal void vulkan_layer_init(void)
+void vulkan_layer_init(void)
 {
 #ifdef __cplusplus
 	vl = {};
