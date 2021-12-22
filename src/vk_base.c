@@ -2,8 +2,8 @@
 #include "tools.h"
 #include "stdlib.h"
 #include "string.h"
-
 #define EXEC
+
 #ifdef EXEC
 #define NOGLFW 1
 #include "vkwin.h"
@@ -175,7 +175,7 @@ typedef struct VertexInputAttribute
 {
     u32 location;
     u8 name[64];
-    b32 builtin;
+    b32 builtin; //in case builtin, we don't really use it
     u32 array_count;
     u32 size; //size of attribute in bytes
     VkFormat format;
@@ -183,6 +183,7 @@ typedef struct VertexInputAttribute
 
 
 #define MAX_RESOURCES_PER_SHADER 32
+
 typedef struct ShaderMetaInfo
 {
 
@@ -598,6 +599,7 @@ VkPipeline build_pipeline(VkDevice device, PipelineBuilder p,VkRenderPass render
 	color_blending.pAttachments = &p.color_blend_attachment;
 	
 
+    /*
     VkDynamicState dynamic_state_enables[] =
     { VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_LINE_WIDTH, VK_DYNAMIC_STATE_BLEND_CONSTANTS };
     VkPipelineDynamicStateCreateInfo dynamic_state = { 0 };
@@ -606,6 +608,7 @@ VkPipeline build_pipeline(VkDevice device, PipelineBuilder p,VkRenderPass render
     dynamic_state.flags = NULL;
     dynamic_state.dynamicStateCount = array_count(dynamic_state_enables);
     dynamic_state.pDynamicStates = dynamic_state_enables;
+    */
 
 	
 	VkGraphicsPipelineCreateInfo pipeline_info = {0};
@@ -1496,6 +1499,31 @@ void create_descriptor_pool(VkDescriptorPool *descriptor_pool,ShaderObject *vert
 	buf_free(pool_size);
 }
 
+internal VkClearValue clear_values[2];
+VkRenderPassBeginInfo rp_info(VkRenderPass rp, VkFramebuffer fbo)
+{
+    VkRenderPassBeginInfo rp_info = { 0 };
+
+
+    rp_info.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+    rp_info.renderPass = rp;
+    rp_info.framebuffer = fbo; //we bind a _framebuffer_ to a render pass
+    rp_info.renderArea.offset.x = 0;
+    rp_info.renderArea.offset.y = 0;
+    rp_info.renderArea.extent = vl.swap.extent;
+#ifdef __cplusplus
+	clear_values[0].color = {{0.0f, 0.0f, 0.0f, 1.0f}};
+	clear_values[1].depthStencil = {1.0f, 0};
+#else
+	clear_values[0].color = (VkClearColorValue){{0.0f, 0.0f, 0.0f, 1.0f}};
+	clear_values[1].depthStencil = (VkClearDepthStencilValue){1.0f, 0};
+#endif
+    rp_info.clearValueCount = array_count(clear_values);
+    rp_info.pClearValues = clear_values;
+
+    return rp_info;
+}
+
 VkFormat find_depth_format(void);
 VkRenderPass create_render_pass(VkAttachmentLoadOp load_op,VkImageLayout initial, VkImageLayout final, u32 color_attachment_count, b32 depth_attachment_active)
 {
@@ -2044,6 +2072,17 @@ void pipeline_build_basic_no_reflect(PipelineObject *p,const char *vert, const c
 	pb.shader_stages[0] = pipe_shader_stage_create_info(p->vert_shader.stage, p->vert_shader.module);
 	pb.shader_stages[1] = pipe_shader_stage_create_info(p->frag_shader.stage, p->frag_shader.module);
 
+ 
+	VkPipelineVertexInputStateCreateInfo vinfo = {0};
+	vinfo.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
+	vinfo.pNext = NULL;
+	vinfo.vertexBindingDescriptionCount = 0;
+    vinfo.pVertexBindingDescriptions = NULL;
+	vinfo.vertexAttributeDescriptionCount = 0;
+    vinfo.pVertexAttributeDescriptions = NULL;
+
+
+    pb.vertex_input_info = vinfo;
 	pb.input_asm = pipe_input_assembly_create_info((VkPrimitiveTopology)topology);
 	pb.rasterizer = pipe_rasterization_state_create_info(VK_POLYGON_MODE_FILL);
 	pb.multisampling = pipe_multisampling_state_create_info();
@@ -2209,6 +2248,10 @@ void render_cube_immediate(VkCommandBuffer command_buf, u32 image_index, Pipelin
 
 void render_def_vbo(VkCommandBuffer command_buf, u32 image_index, float *mvp, vec4 color, DataBuffer *vbo, DataBuffer *ibo,u32 vertex_offset, u32 index_offset, TextureObject *tex, f32 ww, f32 wh)
 {
+    VkRenderPassBeginInfo rp_inf = rp_info(vl.render_pass_basic, vl.swap.framebuffers[vl.image_index]);
+    vkCmdBeginRenderPass(vl.command_buffers[vl.image_index], &rp_inf, VK_SUBPASS_CONTENTS_INLINE);
+
+
     PipelineObject* p = &vl.def_pipe;
     VkDescriptorSetLayout layout = shader_create_descriptor_set_layout(&p->vert_shader, &p->frag_shader, 1);
     DataBuffer* uniform_buffer = create_uniform_buffers(&p->vert_shader.info, 1);
@@ -2261,6 +2304,27 @@ void render_def_vbo(VkCommandBuffer command_buf, u32 image_index, float *mvp, ve
 
     vkCmdDrawIndexed(command_buf, ibo->size / sizeof(u32), 1, 0,0, 0);
 
+    vkCmdEndRenderPass(vl.command_buffers[vl.image_index]);
+
+    ///*
+    //---------------STALL-------------------
+    //execute command buffer
+    vkEndCommandBuffer(vl.command_buffers[vl.image_index]);
+    VkSubmitInfo submit_info = { 0 };
+    submit_info.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+    submit_info.commandBufferCount = 1;
+    submit_info.pCommandBuffers = &vl.command_buffers[vl.image_index];
+    //wait for EVERYTHING to finish
+    vkQueueSubmit(vl.graphics_queue, 1, &submit_info, VK_NULL_HANDLE);
+    vkQueueWaitIdle(vl.graphics_queue);
+    //reset the command buffer for the next drawcall!
+    vkResetCommandBuffer(vl.command_buffers[vl.image_index], VK_COMMAND_BUFFER_RESET_RELEASE_RESOURCES_BIT);
+    VkCommandBufferBeginInfo begin_info = { 0 };
+    begin_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+    begin_info.flags = 0;
+    begin_info.pInheritanceInfo = NULL;
+    vkBeginCommandBuffer(vl.command_buffers[vl.image_index], &begin_info);
+    //*/
 }
 
 
@@ -2509,45 +2573,14 @@ void frame_start(void)
     begin_info.pInheritanceInfo = NULL;
     VK_CHECK(vkBeginCommandBuffer(vl.command_buffers[vl.image_index], &begin_info));
 
-    VkRenderPassBeginInfo renderpass_info = { 0 };
-    renderpass_info.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
-    renderpass_info.renderPass = vl.swap.rp_begin;
-    renderpass_info.framebuffer = vl.swap.framebuffers[vl.image_index]; //we bind a _framebuffer_ to a render pass
-    renderpass_info.renderArea.offset.x= 0;
-	renderpass_info.renderArea.offset.y= 0;
-    renderpass_info.renderArea.extent = vl.swap.extent;
-    VkClearValue clear_values[2] = { 0 };
-#ifdef __cplusplus
-	clear_values[0].color = {{0.0f, 0.0f, 0.0f, 1.0f}};
-	clear_values[1].depthStencil = {1.0f, 0};
-#else
-	clear_values[0].color = (VkClearColorValue){{0.0f, 0.0f, 0.0f, 1.0f}};
-	clear_values[1].depthStencil = (VkClearDepthStencilValue){1.0f, 0};
-#endif
-    renderpass_info.clearValueCount = array_count(clear_values);
-    renderpass_info.pClearValues = clear_values;
+
+    VkRenderPassBeginInfo renderpass_info = rp_info(vl.swap.rp_begin, vl.swap.framebuffers[vl.image_index]);
     vkCmdBeginRenderPass(vl.command_buffers[vl.image_index], &renderpass_info, VK_SUBPASS_CONTENTS_INLINE);
 	vkCmdEndRenderPass(vl.command_buffers[vl.image_index]);
 }
 void frame_end(void)
 {
-	VkRenderPassBeginInfo renderpass_info = { 0 };
-    renderpass_info.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
-    renderpass_info.renderPass = vl.swap.rp_end;
-    renderpass_info.framebuffer = vl.swap.framebuffers[vl.image_index]; //we bind a _framebuffer_ to a render pass
-    renderpass_info.renderArea.offset.x= 0;
-	renderpass_info.renderArea.offset.y= 0;
-    renderpass_info.renderArea.extent = vl.swap.extent;
-    VkClearValue clear_values[2] = { 0 };
-#ifdef __cplusplus
-	clear_values[0].color = {{0.0f, 0.0f, 0.0f, 1.0f}};
-	clear_values[1].depthStencil = {1.0f, 0};
-#else
-	clear_values[0].color = (VkClearColorValue){{0.0f, 0.0f, 0.0f, 1.0f}};
-	clear_values[1].depthStencil = (VkClearDepthStencilValue){1.0f, 0};
-#endif
-    renderpass_info.clearValueCount = array_count(clear_values);
-    renderpass_info.pClearValues = clear_values;
+    VkRenderPassBeginInfo renderpass_info = rp_info(vl.swap.rp_end, vl.swap.framebuffers[vl.image_index]);
     vkCmdBeginRenderPass(vl.command_buffers[vl.image_index], &renderpass_info, VK_SUBPASS_CONTENTS_INLINE);
 	vkCmdEndRenderPass(vl.command_buffers[vl.image_index]);
 	
@@ -2604,26 +2637,7 @@ void draw_frame(void)
 #endif
 	
 	
-	VkRenderPassBeginInfo renderpass_info = { 0 };
-    
-    renderpass_info.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
-    renderpass_info.renderPass = vl.render_pass_basic;
-    renderpass_info.framebuffer = vl.swap.framebuffers[vl.image_index]; //we bind a _framebuffer_ to a render pass
-    renderpass_info.renderArea.offset.x= 0;
-	renderpass_info.renderArea.offset.y= 0;
-    renderpass_info.renderArea.extent = vl.swap.extent;
-    VkClearValue clear_values[2] = { 0 };
-#ifdef __cplusplus
-	clear_values[0].color = {{0.0f, 0.0f, 0.0f, 1.0f}};
-	clear_values[1].depthStencil = {1.0f, 0};
-#else
-	clear_values[0].color = (VkClearColorValue){{0.0f, 0.0f, 0.0f, 1.0f}};
-	clear_values[1].depthStencil = (VkClearDepthStencilValue){1.0f, 0};
-#endif
-	
-    renderpass_info.clearValueCount = array_count(clear_values);
-    renderpass_info.pClearValues = clear_values;
-
+	VkRenderPassBeginInfo renderpass_info = rp_info(vl.render_pass_basic, vl.swap.framebuffers[vl.image_index]);
     vkCmdBeginRenderPass(vl.command_buffers[vl.image_index], &renderpass_info, VK_SUBPASS_CONTENTS_INLINE);
 #ifdef EXEC
     mat4 m = mat4_mul(mat4_translate(v3(1.2 * sin(get_time()),0,-4)),m4d(1.f));
