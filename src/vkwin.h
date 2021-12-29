@@ -7,7 +7,7 @@
 	#include "windows.h"
 #else
 	#define GLFW_INCLUDE_VULKAN
-	#include <glfw3.h>
+	#include "../ext/GLFW/glfw3.h"
 #endif
 
 typedef struct Window
@@ -26,7 +26,12 @@ internal void vk_error(char *text)
 	printf("%s\n",text);
 }
 
-
+f32 gettimems(void)
+{
+	SYSTEMTIME tm;
+	GetLocalTime(&tm);
+	return tm.wMilliseconds;
+}
 //milliseconds since program startup
 internal f32 get_time(void)
 {

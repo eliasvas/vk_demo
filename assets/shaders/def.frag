@@ -13,11 +13,11 @@ layout(set  = 0, binding = 0) uniform UniformBufferObject {
 	float ww;
 	float wh;
 	float textured;
-}ubo;
+};
 void main()
 {
 
 	FragColor = g_vVSColor;
-	FragColor = texture(tex_sampler, g_vVSUV) * ubo.textured * g_vVSColor + g_vVSColor * (1.0 - ubo.textured);
+	FragColor = texture(tex_sampler, g_vVSUV) * textured * g_vVSColor + g_vVSColor * (1.0 - textured);
 	if (texture(tex_sampler, g_vVSUV).a < 0.1)discard;
 }

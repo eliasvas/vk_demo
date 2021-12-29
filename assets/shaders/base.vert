@@ -15,10 +15,10 @@ layout(set  = 0, binding = 0) uniform UniformBufferObject {
     mat4 view;
     mat4 proj;
 	float modifier;
-} ubo;
+};
 
 void main() {
-    gl_Position = ubo.proj * ubo.view * ubo.model * vec4(vertex_pos, 1.0);
-    f_normal = mat3(transpose(inverse(ubo.model)))*vertex_normal;
+    gl_Position = proj * view * model * vec4(vertex_pos, 1.0);
+    f_normal = mat3(transpose(inverse(model)))*vertex_normal;
 	f_tex_coord = tex_coord;
 }

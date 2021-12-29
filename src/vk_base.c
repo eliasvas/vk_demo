@@ -3,7 +3,6 @@
 #include "stdlib.h"
 #include "string.h"
 #define EXEC
-
 #ifdef EXEC
 #define NOGLFW 1
 #include "vkwin.h"
@@ -511,14 +510,17 @@ VkPipelineColorBlendAttachmentState pipe_color_blend_attachment_state(void)
 	VkPipelineColorBlendAttachmentState color_blend_attachment = {0};
 	color_blend_attachment.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
 		VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
-	color_blend_attachment.blendEnable = VK_FALSE;
+#ifdef EXEC
+	color_blend_attachment.blendEnable = VK_FALSE;	
+#else
+	color_blend_attachment.blendEnable = VK_TRUE;	
+#endif		
     color_blend_attachment.srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA;
     color_blend_attachment.dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
     color_blend_attachment.colorBlendOp = VK_BLEND_OP_ADD;
-    color_blend_attachment.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
-    color_blend_attachment.dstAlphaBlendFactor = VK_BLEND_FACTOR_ZERO;
+    color_blend_attachment.srcAlphaBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA;
+    color_blend_attachment.dstAlphaBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
     color_blend_attachment.alphaBlendOp= VK_BLEND_OP_ADD;
-	color_blend_attachment.blendEnable = VK_FALSE;
 	return color_blend_attachment;
 }
 
@@ -2246,7 +2248,7 @@ void render_cube_immediate(VkCommandBuffer command_buf, u32 image_index, Pipelin
 	
 }
 
-void render_def_vbo(VkCommandBuffer command_buf, u32 image_index, float *mvp, vec4 color, DataBuffer *vbo, DataBuffer *ibo,u32 vertex_offset, u32 index_offset, TextureObject *tex, f32 ww, f32 wh)
+void render_def_vbo(VkCommandBuffer command_buf, u32 image_index, float *mvp, vec4 color, DataBuffer *vbo, DataBuffer *ibo,u32 vertex_offset, u32 index_offset, TextureObject *tex, f32 ww, f32 wh, u32 vbo_updated)
 {
     VkRenderPassBeginInfo rp_inf = rp_info(vl.render_pass_basic, vl.swap.framebuffers[vl.image_index]);
     vkCmdBeginRenderPass(vl.command_buffers[vl.image_index], &rp_inf, VK_SUBPASS_CONTENTS_INLINE);
@@ -2306,25 +2308,29 @@ void render_def_vbo(VkCommandBuffer command_buf, u32 image_index, float *mvp, ve
 
     vkCmdEndRenderPass(vl.command_buffers[vl.image_index]);
 
-    ///*
-    //---------------STALL-------------------
-    //execute command buffer
-    vkEndCommandBuffer(vl.command_buffers[vl.image_index]);
-    VkSubmitInfo submit_info = { 0 };
-    submit_info.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
-    submit_info.commandBufferCount = 1;
-    submit_info.pCommandBuffers = &vl.command_buffers[vl.image_index];
-    //wait for EVERYTHING to finish
-    vkQueueSubmit(vl.graphics_queue, 1, &submit_info, VK_NULL_HANDLE);
-    vkQueueWaitIdle(vl.graphics_queue);
-    //reset the command buffer for the next drawcall!
-    vkResetCommandBuffer(vl.command_buffers[vl.image_index], VK_COMMAND_BUFFER_RESET_RELEASE_RESOURCES_BIT);
-    VkCommandBufferBeginInfo begin_info = { 0 };
-    begin_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
-    begin_info.flags = 0;
-    begin_info.pInheritanceInfo = NULL;
-    vkBeginCommandBuffer(vl.command_buffers[vl.image_index], &begin_info);
-    //*/
+    
+    if (vbo_updated)
+    {
+        ///*
+        //---------------STALL-------------------
+        //execute command buffer
+        vkEndCommandBuffer(vl.command_buffers[vl.image_index]);
+        VkSubmitInfo submit_info = { 0 };
+        submit_info.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+        submit_info.commandBufferCount = 1;
+        submit_info.pCommandBuffers = &vl.command_buffers[vl.image_index];
+        //wait for EVERYTHING to finish
+        vkQueueSubmit(vl.graphics_queue, 1, &submit_info, VK_NULL_HANDLE);
+        vkQueueWaitIdle(vl.graphics_queue);
+        //reset the command buffer for the next drawcall!
+        vkResetCommandBuffer(vl.command_buffers[vl.image_index], VK_COMMAND_BUFFER_RESET_RELEASE_RESOURCES_BIT);
+        VkCommandBufferBeginInfo begin_info = { 0 };
+        begin_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+        begin_info.flags = 0;
+        begin_info.pInheritanceInfo = NULL;
+        vkBeginCommandBuffer(vl.command_buffers[vl.image_index], &begin_info);
+        //*/
+    }
 }
 
 
@@ -2477,6 +2483,49 @@ TextureObject create_texture_image(char *filename, VkFormat format)
 	return tex;
 }
 
+
+TextureObject create_texture_image_wdata(u8* pixels,u32 tex_w, u32 tex_h, VkFormat format)
+{
+    TextureObject tex;
+   
+    VkDeviceSize image_size = tex_w * tex_h * 4;
+
+
+    //[2]: we create a buffer to hold the pixel information (we also fill it)
+    DataBuffer idb;
+    if (!pixels)
+        vk_error("Error loading image %s!");
+    create_buffer(VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+        (VkMemoryPropertyFlagBits)(VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT), &idb, image_size, pixels);
+    //[3]: we free the cpu side image, we don't need it
+    //[4]: we create the VkImage that is undefined right now
+    create_image(tex_w, tex_h, format, VK_IMAGE_TILING_LINEAR, VK_IMAGE_USAGE_TRANSFER_DST_BIT
+        | VK_IMAGE_USAGE_SAMPLED_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, &tex.image, &tex.device_mem);
+
+    //[5]: we transition the images layout from undefined to dst_optimal
+    transition_image_layout(tex.image, format, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+
+    //[6]: we copy the buffer we created in [1] to our image of the correct format (R8G8B8A8_SRGB)
+    copy_buffer_to_image(idb.buffer, tex.image, tex_w, tex_h);
+
+    //[7]: we transition the image layout so that it can be read by a shader
+    transition_image_layout(tex.image, format,
+        VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+
+    //[8]:cleanup the buffers (all data is now in the image)
+    buf_destroy(&idb);
+
+
+    create_texture_sampler(&tex.sampler);
+
+    tex.view = create_image_view(tex.image, format, VK_IMAGE_ASPECT_COLOR_BIT);
+    tex.mip_levels = 0;
+    tex.width = tex_w;
+    tex.height = tex_h;
+
+    return tex;
+}
+
 void texture_image_cleanup(TextureObject *t)
 {
     vkDestroySampler(vl.device, t->sampler, NULL);
@@ -2519,7 +2568,7 @@ int vulkan_init(void) {
 #endif
 
 	vl_base_pipelines_init();
-    ubo_manager_init(110);
+    ubo_manager_init(1000);
 	
 
 	
@@ -2630,6 +2679,8 @@ void frame_end(void)
 
     current_frame = (current_frame + 1) % MAX_FRAMES_IN_FLIGHT;
 }
+
+
 void draw_frame(void)
 {
 #ifdef EXEC
@@ -2640,7 +2691,7 @@ void draw_frame(void)
 	VkRenderPassBeginInfo renderpass_info = rp_info(vl.render_pass_basic, vl.swap.framebuffers[vl.image_index]);
     vkCmdBeginRenderPass(vl.command_buffers[vl.image_index], &renderpass_info, VK_SUBPASS_CONTENTS_INLINE);
 #ifdef EXEC
-    mat4 m = mat4_mul(mat4_translate(v3(1.2 * sin(get_time()),0,-4)),m4d(1.f));
+    mat4 m = mat4_mul(mat4_translate(v3(2.f * sin(gettimems()/100.f),0,-4)),m4d(1.f));
 #else
 	 mat4 m = mat4_mul(mat4_translate(v3(1.2,0,-4)),m4d(1.f));
 #endif
