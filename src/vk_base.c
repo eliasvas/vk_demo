@@ -2,8 +2,8 @@
 #include "tools.h"
 #include "stdlib.h"
 #include "string.h"
-#define EXEC
-#ifdef EXEC
+#define VK_STANDALONE
+#ifdef VK_STANDALONE
 #define NOGLFW 1
 #include "vkwin.h"
 Window wnd;
@@ -50,7 +50,7 @@ s32 window_h = 600;
 		}                                                           \
 	} while (0);
 	
-#ifdef EXEC
+#ifdef VK_STANDALONE
 
 #define MAX_SWAP_IMAGE_COUNT 4
 
@@ -510,7 +510,7 @@ VkPipelineColorBlendAttachmentState pipe_color_blend_attachment_state(void)
 	VkPipelineColorBlendAttachmentState color_blend_attachment = {0};
 	color_blend_attachment.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
 		VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
-#ifdef EXEC
+#ifdef VK_STANDALONE
 	color_blend_attachment.blendEnable = VK_FALSE;	
 #else
 	color_blend_attachment.blendEnable = VK_TRUE;	
@@ -557,7 +557,7 @@ VkPipeline build_pipeline(VkDevice device, PipelineBuilder p,VkRenderPass render
 	
 	VkPipelineDepthStencilStateCreateInfo depth_stencil = {0};
 	depth_stencil.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
-#ifdef EXEC
+#ifdef VK_STANDALONE
 	depth_stencil.depthTestEnable = VK_TRUE;
 #else
     depth_stencil.depthTestEnable = VK_FALSE;
@@ -1235,7 +1235,7 @@ VkExtent2D choose_swap_extent(SwapChainSupportDetails details)
     else
     {
         u32 width, height;
-#ifdef EXEC
+#ifdef VK_STANDALONE
 		window_get_framebuffer_size(&wnd, &width, &height);
 #else
         width = vk_getHeight();
@@ -2153,7 +2153,7 @@ void pipeline_cleanup(PipelineObject *pipe)
 
 void vl_base_pipelines_init(void)
 {
-#ifdef EXEC
+#ifdef VK_STANDALONE
     pipeline_build_basic_no_reflect(&vl.fullscreen_pipe, "fullscreen.vert", "fullscreen.frag", VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST);
     pipeline_build_basic(&vl.base_pipe, "base.vert", "base.frag", VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST);
 #endif
@@ -2313,7 +2313,7 @@ void render_def_vbo(VkCommandBuffer command_buf, u32 image_index, float *mvp, ve
     {
         ///*
         //---------------STALL-------------------
-        //execute command buffer
+        //VK_STANDALONEute command buffer
         vkEndCommandBuffer(vl.command_buffers[vl.image_index]);
         VkSubmitInfo submit_info = { 0 };
         submit_info.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
@@ -2360,7 +2360,7 @@ void create_sync_objects(void)
 
 void create_surface(void)
 {
-#ifdef EXEC
+#ifdef VK_STANDALONE
 	window_create_window_surface(vl.instance, &wnd, &vl.surface);
 #else
     VkWin32SurfaceCreateInfoKHR surface_create_info =
@@ -2390,7 +2390,7 @@ void vl_recreate_swapchain(void)
 {
     //in case of window minimization (w = 0, h = 0) we wait until we get a proper window again
     u32 width = 0, height = 0;
-#ifdef EXEC
+#ifdef VK_STANDALONE
 	window_get_framebuffer_size(&wnd, &width, &height);
 #else
     width = vk_getWidth();
@@ -2484,11 +2484,11 @@ TextureObject create_texture_image(char *filename, VkFormat format)
 }
 
 
-TextureObject create_texture_image_wdata(u8* pixels,u32 tex_w, u32 tex_h, VkFormat format)
+TextureObject create_texture_image_wdata(u8* pixels,u32 tex_w, u32 tex_h,u32 component_count, VkFormat format)
 {
     TextureObject tex;
    
-    VkDeviceSize image_size = tex_w * tex_h * 4;
+    VkDeviceSize image_size = tex_w * tex_h * component_count;
 
 
     //[2]: we create a buffer to hold the pixel information (we also fill it)
@@ -2559,7 +2559,7 @@ int vulkan_init(void) {
 	vulkan_layer_init();
 	//fbo_init(&fbo1);
 	//fbo_cleanup(&fbo1);
-#ifdef EXEC
+#ifdef VK_STANDALONE
     sample_texture = create_texture_image("../assets/test.png",VK_FORMAT_R8G8B8A8_SRGB);
 	sample_texture2 = create_texture_image("../assets/test.png",VK_FORMAT_R8G8B8A8_UNORM);
 #else
@@ -2609,7 +2609,7 @@ void frame_start(void)
 
 
     ubo_manager_reset(vl.image_index);
-#ifdef EXEC
+#ifdef VK_STANDALONE
     vkResetDescriptorPool(vl.device, vl.base_pipe.descriptor_pools[vl.image_index], NULL);
 #endif
     vkResetDescriptorPool(vl.device, vl.def_pipe.descriptor_pools[vl.image_index], NULL);
@@ -2638,7 +2638,7 @@ void frame_end(void)
     //mark image as used by _this frame_
     images_in_flight[vl.image_index] = in_flight_fences[current_frame];
 
-    //[1]: Execute the command buffer with that image as attachment in the framebuffer
+    //[1]: VK_STANDALONEute the command buffer with that image as attachment in the framebuffer
     VkSubmitInfo submit_info = { 0 };
     submit_info.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
     VkSemaphore wait_semaphores[] = { image_available_semaphores[current_frame] };
@@ -2683,14 +2683,14 @@ void frame_end(void)
 
 void draw_frame(void)
 {
-#ifdef EXEC
+#ifdef VK_STANDALONE
     frame_start();
 #endif
 	
 	
 	VkRenderPassBeginInfo renderpass_info = rp_info(vl.render_pass_basic, vl.swap.framebuffers[vl.image_index]);
     vkCmdBeginRenderPass(vl.command_buffers[vl.image_index], &renderpass_info, VK_SUBPASS_CONTENTS_INLINE);
-#ifdef EXEC
+#ifdef VK_STANDALONE
     mat4 m = mat4_mul(mat4_translate(v3(2.f * sin(gettimems()/100.f),0,-4)),m4d(1.f));
 #else
 	 mat4 m = mat4_mul(mat4_translate(v3(1.2,0,-4)),m4d(1.f));
@@ -2704,12 +2704,12 @@ void draw_frame(void)
     render_cube_immediate(vl.command_buffers[vl.image_index], vl.image_index, &vl.base_pipe, m);
 	vkCmdEndRenderPass(vl.command_buffers[vl.image_index]);
 	
-#ifdef EXEC
+#ifdef VK_STANDALONE
     frame_end();
 #endif
 }
 
-#ifdef EXEC
+#ifdef VK_STANDALONE
 
 f32 nb_frames = 0.0f;
 f32 current_time = 0.0f;
@@ -2744,7 +2744,7 @@ void main_loop(void)
 
 void cleanup(void)
 {
-    vkDeviceWaitIdle(vl.device);  //so we dont close the window while commands are still being executed
+    vkDeviceWaitIdle(vl.device);  //so we dont close the window while commands are still being VK_STANDALONEuted
     vl_cleanup_swapchain();
     
 	buf_destroy(&index_buffer_real);
@@ -2767,7 +2767,7 @@ void cleanup(void)
 }
 
 
-#if defined(EXEC)
+#if defined(VK_STANDALONE)
 int main(void) 
 {
 #if defined(PLATFORM_WINDOWS) && defined(NOGLFW)
