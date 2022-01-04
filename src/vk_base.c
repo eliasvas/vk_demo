@@ -2,6 +2,7 @@
 #include "tools.h"
 #include "stdlib.h"
 #include "string.h"
+
 #define VK_STANDALONE
 #ifdef VK_STANDALONE
 #define NOGLFW 1
@@ -539,21 +540,37 @@ VkPipelineLayoutCreateInfo pipe_layout_create_info(VkDescriptorSetLayout *layout
 	return info;
 }
 
-VkPipeline build_pipeline(VkDevice device, PipelineBuilder p,VkRenderPass render_pass)
+VkViewport viewport_basic(void)
 {
-	//------these are fixed-------
-	VkViewport viewport = {0};
+    VkViewport viewport = { 0 };
     viewport.x = 0.0f;
     viewport.y = 0.0f;
     viewport.width = (f32)vl.swap.extent.width;
     viewport.height = (f32)vl.swap.extent.height;
+    viewport.height *= fabs(sin(get_time()));
     viewport.minDepth = 0.0f;
     viewport.maxDepth = 1.0f;
-    
+    return viewport;
+}
+
+VkRect2D scissor_basic(void)
+{
     VkRect2D scissor = {0};
     scissor.offset.x = 0;
 	scissor.offset.y = 0;
     scissor.extent = vl.swap.extent;
+    scissor.extent.height *= fabs(sin(get_time()));
+	
+    return scissor;
+
+}
+
+VkPipeline build_pipeline(VkDevice device, PipelineBuilder p,VkRenderPass render_pass)
+{
+	//------these are not used because they are dynamic rn!-------
+    VkViewport viewport = viewport_basic();
+    
+    VkRect2D scissor = scissor_basic();
 	
 	VkPipelineDepthStencilStateCreateInfo depth_stencil = {0};
 	depth_stencil.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
@@ -601,16 +618,15 @@ VkPipeline build_pipeline(VkDevice device, PipelineBuilder p,VkRenderPass render
 	color_blending.pAttachments = &p.color_blend_attachment;
 	
 
-    /*
     VkDynamicState dynamic_state_enables[] =
-    { VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_LINE_WIDTH, VK_DYNAMIC_STATE_BLEND_CONSTANTS };
+    { VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR};
     VkPipelineDynamicStateCreateInfo dynamic_state = { 0 };
     dynamic_state.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
     dynamic_state.pNext = NULL;
     dynamic_state.flags = NULL;
     dynamic_state.dynamicStateCount = array_count(dynamic_state_enables);
     dynamic_state.pDynamicStates = dynamic_state_enables;
-    */
+
 
 	
 	VkGraphicsPipelineCreateInfo pipeline_info = {0};
@@ -625,7 +641,7 @@ VkPipeline build_pipeline(VkDevice device, PipelineBuilder p,VkRenderPass render
 	pipeline_info.pMultisampleState = &p.multisampling;
 	pipeline_info.pColorBlendState = &color_blending;
 	pipeline_info.pDepthStencilState = &depth_stencil;
-    //pipeline_info.pDynamicState = &dynamic_state;
+    pipeline_info.pDynamicState = &dynamic_state;
 	pipeline_info.layout = p.pipeline_layout;
 	pipeline_info.renderPass = render_pass;
 	pipeline_info.subpass = 0;
@@ -843,6 +859,15 @@ void shader_create_dynamic(VkDevice device, ShaderObject *shader, const char *fi
     //remove(new_file);
 }  
 
+void shader_create_from_data(VkDevice device, ShaderObject* shader,u32 *shader_code,u32 code_size, VkShaderStageFlagBits stage)
+{
+    shader->module = create_shader_module((char*)shader_code, code_size);
+    shader->uses_push_constants = FALSE;
+    shader_reflect(shader_code, code_size, &shader->info);
+    //printf("Shader: %s has %i input variable(s)!\n", filename, shader->info.input_variable_count);
+    shader->stage = stage;
+    //remove(new_file);
+}
 
 void shader_create(VkDevice device, ShaderObject *shader, const char *filename, VkShaderStageFlagBits stage)
 {
@@ -1048,7 +1073,7 @@ void vl_create_instance(void) {
 	appinfo.applicationVersion = VK_MAKE_VERSION(1,0,0);
 	appinfo.pEngineName = "Hive3D";
 	appinfo.engineVersion = VK_MAKE_VERSION(1,0,0);
-	appinfo.apiVersion = VK_API_VERSION_1_0;
+	appinfo.apiVersion = VK_API_VERSION_1_2;
     
     
 	VkInstanceCreateInfo create_info = {0};
@@ -1526,6 +1551,8 @@ VkRenderPassBeginInfo rp_info(VkRenderPass rp, VkFramebuffer fbo)
     return rp_info;
 }
 
+
+
 VkFormat find_depth_format(void);
 VkRenderPass create_render_pass(VkAttachmentLoadOp load_op,VkImageLayout initial, VkImageLayout final, u32 color_attachment_count, b32 depth_attachment_active)
 {
@@ -1592,7 +1619,7 @@ VkRenderPass create_render_pass(VkAttachmentLoadOp load_op,VkImageLayout initial
     render_pass_info.subpassCount = 1;
     render_pass_info.pSubpasses = &subpass;
     
-    ///*
+    /*
     VkSubpassDependency dependency = {0};
     dependency.srcSubpass = VK_SUBPASS_EXTERNAL;
     dependency.dstSubpass = 0;
@@ -1602,7 +1629,7 @@ VkRenderPass create_render_pass(VkAttachmentLoadOp load_op,VkImageLayout initial
     dependency.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
     render_pass_info.dependencyCount = 1;
     render_pass_info.pDependencies = &dependency;
-    //*/
+    */
     VK_CHECK(vkCreateRenderPass(vl.device, &render_pass_info, NULL, &render_pass));
 	
 	buf_free(attachment_refs);
@@ -1665,9 +1692,14 @@ void vl_create_command_pool(void)
 
 void render_fullscreen(VkCommandBuffer command_buf, u32 image_index)
 {    
+    VkRenderPassBeginInfo renderpass_info = rp_info(vl.render_pass_basic, vl.swap.framebuffers[vl.image_index]);
+    vkCmdBeginRenderPass(command_buf, &renderpass_info, VK_SUBPASS_CONTENTS_INLINE);
+
+
 	vkCmdBindPipeline(command_buf, VK_PIPELINE_BIND_POINT_GRAPHICS, vl.fullscreen_pipe.pipeline);
 	
     vkCmdDraw(command_buf, 4, 1, 0, 0);
+	vkCmdEndRenderPass(command_buf);
 }
 
 void vl_create_command_buffers(void)
@@ -2201,6 +2233,10 @@ void ubo_manager_reset(u32 image_index)
 
 void render_cube_immediate(VkCommandBuffer command_buf, u32 image_index, PipelineObject *p, mat4 model)
 {
+    VkRenderPassBeginInfo rp_inf = rp_info(vl.render_pass_basic, vl.swap.framebuffers[vl.image_index]);
+    vkCmdBeginRenderPass(command_buf, &rp_inf, VK_SUBPASS_CONTENTS_INLINE);
+
+
     VkDescriptorSetLayout layout = shader_create_descriptor_set_layout(&p->vert_shader, &p->frag_shader, 1);
     DataBuffer *uniform_buffer = create_uniform_buffers(&p->vert_shader.info, 1);
 	TextureObject textures[] = {sample_texture, sample_texture2};
@@ -2215,12 +2251,17 @@ void render_cube_immediate(VkCommandBuffer command_buf, u32 image_index, Pipelin
 
 
 	vkCmdBindPipeline(command_buf, VK_PIPELINE_BIND_POINT_GRAPHICS, p->pipeline);
-		
+	
     VkBuffer vertex_buffers[] = {vertex_buffer_real.buffer};
     VkDeviceSize offsets[] = {0};
     vkCmdBindVertexBuffers(command_buf, 0, 1, vertex_buffers, offsets);
     vkCmdBindIndexBuffer(command_buf, index_buffer_real.buffer, 0, VK_INDEX_TYPE_UINT32);
-        
+    
+    VkViewport viewport = viewport_basic();
+    vkCmdSetViewport(command_buf, 0, 1, &viewport);
+
+    VkRect2D scissor = scissor_basic();
+    vkCmdSetScissor(command_buf, 0, 1, &scissor);
  
 
     void *data = malloc(p->vert_shader.info.descriptor_bindings[0].mem_size);
@@ -2246,6 +2287,7 @@ void render_cube_immediate(VkCommandBuffer command_buf, u32 image_index, Pipelin
 
     vkCmdDrawIndexed(command_buf, index_buffer_real.size / sizeof(u32), 1, 0, 0, 0);
 	
+    vkCmdEndRenderPass(vl.command_buffers[vl.image_index]);
 }
 
 void render_def_vbo(VkCommandBuffer command_buf, u32 image_index, float *mvp, vec4 color, DataBuffer *vbo, DataBuffer *ibo,u32 vertex_offset, u32 index_offset, TextureObject *tex, f32 ww, f32 wh, u32 vbo_updated)
@@ -2279,7 +2321,11 @@ void render_def_vbo(VkCommandBuffer command_buf, u32 image_index, float *mvp, ve
     vkCmdBindVertexBuffers(command_buf, 0, 1, vertex_buffers, offsets);
     vkCmdBindIndexBuffer(command_buf, ibo->buffer, index_offset, VK_INDEX_TYPE_UINT32);
 
+    VkViewport viewport = viewport_basic();
+    vkCmdSetViewport(command_buf,0,1,&viewport);
 
+    VkRect2D scissor = scissor_basic();
+    vkCmdSetScissor(command_buf, 0, 1, &scissor);
 
     void* data = malloc(p->vert_shader.info.descriptor_bindings[0].mem_size);
 
@@ -2688,22 +2734,17 @@ void draw_frame(void)
 #endif
 	
 	
-	VkRenderPassBeginInfo renderpass_info = rp_info(vl.render_pass_basic, vl.swap.framebuffers[vl.image_index]);
-    vkCmdBeginRenderPass(vl.command_buffers[vl.image_index], &renderpass_info, VK_SUBPASS_CONTENTS_INLINE);
+    mat4 m = mat4_mul(mat4_translate(v3(-1.2,0,-6)), m4d(1.f));
+    render_cube_immediate(vl.command_buffers[vl.image_index], vl.image_index, &vl.base_pipe, m);
+	
+
 #ifdef VK_STANDALONE
-    mat4 m = mat4_mul(mat4_translate(v3(2.f * sin(gettimems()/100.f),0,-4)),m4d(1.f));
+    m = mat4_mul(mat4_translate(v3(-2.f * sin(gettimems()/400.f),0,-4)),m4d(1.f));
 #else
-	 mat4 m = mat4_mul(mat4_translate(v3(1.2,0,-4)),m4d(1.f));
+	m = mat4_mul(mat4_translate(v3(1.2,0,-4)),m4d(1.f));
 #endif
     render_cube_immediate(vl.command_buffers[vl.image_index], vl.image_index, &vl.base_pipe, m);
 	render_fullscreen(vl.command_buffers[vl.image_index], vl.image_index);
-	vkCmdEndRenderPass(vl.command_buffers[vl.image_index]);
-
-    vkCmdBeginRenderPass(vl.command_buffers[vl.image_index], &renderpass_info, VK_SUBPASS_CONTENTS_INLINE);
-    m = mat4_mul(mat4_translate(v3(-1.2,0,-6)), m4d(1.f));
-    render_cube_immediate(vl.command_buffers[vl.image_index], vl.image_index, &vl.base_pipe, m);
-	vkCmdEndRenderPass(vl.command_buffers[vl.image_index]);
-	
 #ifdef VK_STANDALONE
     frame_end();
 #endif
