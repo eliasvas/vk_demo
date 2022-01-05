@@ -5,11 +5,11 @@ if ERRORLEVEL 1 (
     call  "C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Auxiliary\Build\vcvars64.bat"
 )
 
-set VK_PATH = C:/VulkanSDK/1.2.189.2
+set VK_PATH = C:\VulkanSDK\1.2.198.1
 set application_name=game.exe
 set build_options= -DBUILD_DEVELOPER=1 -DBUILD_DEBUG=1 -DBUILD_WIN32=1
 set compile_flags= -nologo -FC /W0 /Zi /EHsc -I../src -I../src/ -I../ext/ -I../ext/vulkan/  -I../ext/SPIRV/
-set link_flags= -incremental:no -opt:ref user32.lib  ../ext/GLFW/glfw3.lib C:/VulkanSDK/1.2.189.2/Lib/vulkan-1.lib C:/VulkanSDK/1.2.189.2/Lib/*.lib 
+set link_flags= -incremental:no -opt:ref user32.lib  ../ext/GLFW/glfw3.lib C:\VulkanSDK\1.2.198.1/Lib/vulkan-1.lib C:\VulkanSDK\1.2.198.1/Lib/*.lib 
 
 set precompiled_shaders = 1
 

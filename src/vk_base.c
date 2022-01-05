@@ -81,7 +81,6 @@ typedef struct Swapchain
 	u32 image_count;
 	
 	VkRenderPass rp_begin;
-	VkRenderPass rp_end;
 }Swapchain;
 
 #define MAX_ATTACHMENTS_COUNT 4
@@ -182,6 +181,17 @@ typedef struct VertexInputAttribute
 }VertexInputAttribute;
 
 
+typedef struct OutVar 
+{
+    u32 location;
+    u8 name[64];
+    b32 builtin; //in case builtin, we don't really use it
+    u32 array_count;
+    u32 size; //size of attribute in bytes
+    VkFormat format;
+}OutVar;
+
+
 #define MAX_RESOURCES_PER_SHADER 32
 
 typedef struct ShaderMetaInfo
@@ -189,6 +199,9 @@ typedef struct ShaderMetaInfo
 
     VertexInputAttribute vertex_input_attributes[MAX_RESOURCES_PER_SHADER];
     u32 vertex_input_attribute_count;
+
+    OutVar out_vars[MAX_RESOURCES_PER_SHADER];
+    u32 out_var_count;
 
     ShaderDescriptorBinding descriptor_bindings[MAX_RESOURCES_PER_SHADER];
     u32 descriptor_count;
@@ -251,7 +264,6 @@ typedef struct VulkanLayer
     Swapchain swap;
     //----------------------------------
 	VkRenderPass swap_rp_begin;
-    VkRenderPass swap_rp_end;
 	VkRenderPass render_pass_basic;
 
     VkCommandPool command_pool;
@@ -547,7 +559,7 @@ VkViewport viewport_basic(void)
     viewport.y = 0.0f;
     viewport.width = (f32)vl.swap.extent.width;
     viewport.height = (f32)vl.swap.extent.height;
-    viewport.height *= fabs(sin(get_time()));
+    //viewport.height *= fabs(sin(get_time()));
     viewport.minDepth = 0.0f;
     viewport.maxDepth = 1.0f;
     return viewport;
@@ -559,10 +571,42 @@ VkRect2D scissor_basic(void)
     scissor.offset.x = 0;
 	scissor.offset.y = 0;
     scissor.extent = vl.swap.extent;
-    scissor.extent.height *= fabs(sin(get_time()));
+    //scissor.extent.height *= fabs(sin(get_time()));
 	
     return scissor;
 
+}
+
+VkRenderingInfoKHR rendering_info_basic(void)
+{
+    VkRenderingInfoKHR rendering_info = {0};
+    rendering_info.sType = VK_STRUCTURE_TYPE_RENDERING_INFO_KHR;
+
+    VkRenderingAttachmentInfoKHR color_attachment_info = {0};
+    color_attachment_info.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO_KHR; 
+    color_attachment_info.pNext = NULL; 
+    color_attachment_info.imageView = vl.swap.image_views[vl.image_index];
+
+
+    VkRenderingAttachmentInfoKHR depth_attachment_info = {0};
+    depth_attachment_info.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO_KHR; 
+    depth_attachment_info.pNext = NULL; 
+    depth_attachment_info.imageView = vl.swap.depth_attachment.views[0];
+    
+    u32 width, height;
+#ifdef VK_STANDALONE
+		window_get_framebuffer_size(&wnd, &width, &height);
+#else
+        width = vk_getHeight();
+        width = vk_getWidth();
+#endif
+ 
+    rendering_info.renderArea  = (VkRect2D){0,0,width, height};
+    rendering_info.layerCount = 1;
+    rendering_info.pColorAttachments = &color_attachment_info;
+    rendering_info.pDepthAttachment = &depth_attachment_info;
+    rendering_info.pStencilAttachment = &depth_attachment_info;
+    return rendering_info; //this is not safe, pointer to stack allocated variables!
 }
 
 VkPipeline build_pipeline(VkDevice device, PipelineBuilder p,VkRenderPass render_pass)
@@ -628,7 +672,8 @@ VkPipeline build_pipeline(VkDevice device, PipelineBuilder p,VkRenderPass render
     dynamic_state.pDynamicStates = dynamic_state_enables;
 
 
-	
+
+   	
 	VkGraphicsPipelineCreateInfo pipeline_info = {0};
 	pipeline_info.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
 	
@@ -646,6 +691,20 @@ VkPipeline build_pipeline(VkDevice device, PipelineBuilder p,VkRenderPass render
 	pipeline_info.renderPass = render_pass;
 	pipeline_info.subpass = 0;
 	pipeline_info.basePipelineHandle = VK_NULL_HANDLE;
+
+    //Dynamic Rendering stuff
+    VkPipelineRenderingCreateInfoKHR pipe_rendering_create_info = {0};
+    pipe_rendering_create_info.sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO_KHR;
+    pipe_rendering_create_info.colorAttachmentCount = 1;
+    pipe_rendering_create_info.pColorAttachmentFormats= &vl.swap.image_format;
+    pipe_rendering_create_info.depthAttachmentFormat = vl.swap.depth_attachment.format;
+    pipe_rendering_create_info.stencilAttachmentFormat = vl.swap.depth_attachment.format;
+
+    pipeline_info.pNext = &pipe_rendering_create_info;
+
+
+
+
 
 	VkPipeline new_pipeline;
 	if (vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &pipeline_info, NULL, &new_pipeline)!=VK_SUCCESS)
@@ -769,6 +828,35 @@ void shader_reflect(u32 *shader_code, u32 code_size, ShaderMetaInfo *info)
         sprintf((char*const)attr->name, input_vars[i]->name);
         //printf("vertex input variable %s is at location: %i[F%i], size=%i\n", attr->name, attr->location, attr->format, attr->size);
     }
+
+
+    //output variables 
+	u32 out_var_count = 0;
+	SPV_CHECK(spvReflectEnumerateOutputVariables(&module, &out_var_count, NULL));
+	SpvReflectInterfaceVariable** output_vars =
+	  (SpvReflectInterfaceVariable**)malloc(out_var_count * sizeof(SpvReflectInterfaceVariable*));
+	SPV_CHECK(spvReflectEnumerateOutputVariables(&module, &out_var_count, output_vars));
+    info->out_var_count = out_var_count;
+    for (u32 i = 0; i < out_var_count; ++i)
+    {
+        SpvReflectInterfaceVariable* curvar = output_vars[i];
+		if(curvar->location > 100 || curvar->location < 0)continue;
+        OutVar *attr = &info->out_vars[curvar->location];
+        
+
+        attr->location = curvar->location;
+        attr->format = (VkFormat)curvar->format;
+        attr->builtin = curvar->built_in;
+
+        if (curvar->array.dims_count > 0)attr->array_count = curvar->array.dims[0];
+        else attr->array_count = 1;
+
+        attr->size = get_format_size(attr->format) * attr->array_count; //@THIS IS TEMPORARY (DELETE THIS)
+
+        sprintf((char*const)attr->name, output_vars[i]->name);
+        //printf("vertex input variable %s is at location: %i[F%i], size=%i\n", attr->name, attr->location, attr->format, attr->size);
+    }
+
     //descriptor set (UBO)
 
     u32 desc_set_count = 0;
@@ -922,7 +1010,7 @@ const u32 enable_validation_layers= TRUE;
 const u32 enable_validation_layers = TRUE;
 #endif
 
-const char* device_extensions[] = { VK_KHR_SWAPCHAIN_EXTENSION_NAME };
+const char* device_extensions[] = { VK_KHR_SWAPCHAIN_EXTENSION_NAME};//, VK_KHR_DYNAMIC_RENDERING_EXTENSION_NAME };
 
 
 typedef struct UniformBufferObject
@@ -1036,6 +1124,10 @@ u32 check_validation_layer_support(void){
     
 	VkLayerProperties *available_layers = (VkLayerProperties*)malloc(sizeof(VkLayerProperties) * layer_count);
 	vkEnumerateInstanceLayerProperties(&layer_count, available_layers);
+    /*
+    for (u32 i = 0; i < layer_count; ++i)
+        printf("layer %i: %s\n", i, available_layers[i]);
+        */
 	for (u32 i = 0; i < array_count(validation_layers); ++i)
 	{
 		u32 layer_found = 0;
@@ -1085,7 +1177,8 @@ void vl_create_instance(void) {
     char *base_extensions[] = {
 		"VK_KHR_surface",
 		"VK_KHR_win32_surface",
-        VK_EXT_DEBUG_UTILS_EXTENSION_NAME
+        VK_EXT_DEBUG_UTILS_EXTENSION_NAME,
+        VK_KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2_EXTENSION_NAME
 	};
 	//vl.instance_extensions = window_get_required_vl.instance_extensions(&wnd, &vl.instance_ext_count);
     
@@ -1182,6 +1275,10 @@ u32 check_device_extension_support(VkPhysicalDevice device)
     VkExtensionProperties *available_extensions = (VkExtensionProperties*)malloc(sizeof(VkExtensionProperties) * ext_count);
     
     vkEnumerateDeviceExtensionProperties(device, NULL, &ext_count, available_extensions);
+    /*
+    for (u32 i = 0; i < ext_count; ++i)
+        printf("EXT %i: %s\n", i, available_extensions[i]);
+        */
     for (u32 i = 0; i < array_count(device_extensions); ++i)
     {
         u32 ext_found = FALSE;
@@ -1208,6 +1305,7 @@ u32 is_device_suitable(VkPhysicalDevice device)
     vkGetPhysicalDeviceFeatures(device, &device_features);
     
     u32 extensions_supported = check_device_extension_support(device);
+    if (extensions_supported == 0) printf("some device extension not supported!!\n");
     
     SwapChainSupportDetails swapchain_support = query_swapchain_support(device);
     
@@ -1228,6 +1326,10 @@ void vl_pick_physical_device(void) {
         if (is_device_suitable(devices[i]))
     {
         vl.physical_device = devices[i];
+
+        VkPhysicalDeviceProperties p;
+        vkGetPhysicalDeviceProperties(vl.physical_device, &p);
+        //printf("physical device picked: %s\n", p.deviceName);
         break;
     }
     free(devices);
@@ -1338,8 +1440,6 @@ void vl_create_swapchain(void)
 	vl.swap.depth_attachment = create_depth_attachment(vl.swap.extent.width, vl.swap.extent.height);
 	
 	vl.swap.rp_begin = create_render_pass(VK_ATTACHMENT_LOAD_OP_CLEAR,VK_IMAGE_LAYOUT_UNDEFINED,VK_IMAGE_LAYOUT_GENERAL, 1, TRUE);
-	vl.swap.rp_end = create_render_pass(VK_ATTACHMENT_LOAD_OP_LOAD,VK_IMAGE_LAYOUT_GENERAL,VK_IMAGE_LAYOUT_PRESENT_SRC_KHR, 1, TRUE);
-	
 }
 
 VkImageView create_image_view(VkImage image, VkFormat format,  VkImageAspectFlags aspect_flags)
@@ -1911,22 +2011,22 @@ void transition_image_layout(VkImage image, VkFormat format, VkImageLayout old_l
 		
 		src_stage = VK_PIPELINE_STAGE_TRANSFER_BIT;
 		dst_stage = VK_PIPELINE_STAGE_TRANSFER_BIT;
-	}else if (old_layout == VK_IMAGE_LAYOUT_UNDEFINED && new_layout == VK_IMAGE_LAYOUT_GENERAL){
+	}else if (old_layout == VK_IMAGE_LAYOUT_UNDEFINED && new_layout == VK_IMAGE_LAYOUT_GENERAL)
+    {
+    	barrier.srcAccessMask = 0;
+		barrier.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+		
+		src_stage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
+		dst_stage = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+    }
+    else {
 		barrier.srcAccessMask = 0;
-		barrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+		barrier.dstAccessMask = 0;
 		
 		src_stage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
 		dst_stage = VK_PIPELINE_STAGE_TRANSFER_BIT;
-	}else {
-		barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-		barrier.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
-		
-		src_stage = VK_PIPELINE_STAGE_TRANSFER_BIT;
-		dst_stage = VK_PIPELINE_STAGE_TRANSFER_BIT;
 	}
 
-	
-	
 	vkCmdPipelineBarrier(
 		command_buf,
 		src_stage, dst_stage,
@@ -1938,6 +2038,35 @@ void transition_image_layout(VkImage image, VkFormat format, VkImageLayout old_l
 	
 	end_single_time_commands(command_buf);
 }
+void insert_image_memory_barrier(
+			VkCommandBuffer cmdbuffer,
+			VkImage image,
+			VkAccessFlags srcAccessMask,
+			VkAccessFlags dstAccessMask,
+			VkImageLayout oldImageLayout,
+			VkImageLayout newImageLayout,
+			VkPipelineStageFlags srcStageMask,
+			VkPipelineStageFlags dstStageMask,
+			VkImageSubresourceRange subresourceRange)
+		{
+			VkImageMemoryBarrier imageMemoryBarrier = {0};
+            imageMemoryBarrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+			imageMemoryBarrier.srcAccessMask = srcAccessMask;
+			imageMemoryBarrier.dstAccessMask = dstAccessMask;
+			imageMemoryBarrier.oldLayout = oldImageLayout;
+			imageMemoryBarrier.newLayout = newImageLayout;
+			imageMemoryBarrier.image = image;
+			imageMemoryBarrier.subresourceRange = subresourceRange;
+
+			vkCmdPipelineBarrier(
+				cmdbuffer,
+				srcStageMask,
+				dstStageMask,
+				0,
+				0, NULL,
+				0, NULL,
+				1, &imageMemoryBarrier);
+		}
 
 void copy_buffer_to_image(VkBuffer buffer, VkImage image, u32 width, u32 height) {
     VkCommandBuffer command_buf = begin_single_time_commands();
@@ -2429,7 +2558,6 @@ void vl_cleanup_swapchain(void)
     vkDestroySwapchainKHR(vl.device, vl.swap.swapchain, NULL);
 	cleanup_fbo_attachment(&vl.swap.depth_attachment);
 	vkDestroyRenderPass(vl.device, vl.swap.rp_begin, NULL);
-	vkDestroyRenderPass(vl.device, vl.swap.rp_end, NULL);
 }
 
 void vl_recreate_swapchain(void)
@@ -2600,9 +2728,10 @@ void vulkan_layer_init(void)
 }
 
 FrameBufferObject fbo1;
-
 int vulkan_init(void) {
 	vulkan_layer_init();
+    //vkCmdBeginRenderingKHR = (vkGetInstanceProcAddr(vl.instance, "vkCmdBeginRenderingKHR"));
+    //vkCmdEndRenderingKHR = (PFN_vkCmdEndRenderingKHR)vkGetInstanceProcAddr(vl.instance, "vkCmdEndRenderingKHR");
 	//fbo_init(&fbo1);
 	//fbo_cleanup(&fbo1);
 #ifdef VK_STANDALONE
@@ -2669,15 +2798,39 @@ void frame_start(void)
     VK_CHECK(vkBeginCommandBuffer(vl.command_buffers[vl.image_index], &begin_info));
 
 
+    //transition_image_layout(vl.swap.images[vl.image_index], vl.swap.image_format, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL);
+    /*
+    insert_image_memory_barrier(
+				vl.command_buffers[vl.image_index],
+				vl.swap.images[vl.image_index],
+				0,
+				VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
+				VK_IMAGE_LAYOUT_UNDEFINED,
+				VK_IMAGE_LAYOUT_GENERAL,
+				VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+				VK_PIPELINE_STAGE_VERTEX_SHADER_BIT,
+				(VkImageSubresourceRange){ VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 });
+    */
+    ///*
     VkRenderPassBeginInfo renderpass_info = rp_info(vl.swap.rp_begin, vl.swap.framebuffers[vl.image_index]);
     vkCmdBeginRenderPass(vl.command_buffers[vl.image_index], &renderpass_info, VK_SUBPASS_CONTENTS_INLINE);
 	vkCmdEndRenderPass(vl.command_buffers[vl.image_index]);
+    //*/
+
 }
 void frame_end(void)
 {
-    VkRenderPassBeginInfo renderpass_info = rp_info(vl.swap.rp_end, vl.swap.framebuffers[vl.image_index]);
-    vkCmdBeginRenderPass(vl.command_buffers[vl.image_index], &renderpass_info, VK_SUBPASS_CONTENTS_INLINE);
-	vkCmdEndRenderPass(vl.command_buffers[vl.image_index]);
+
+insert_image_memory_barrier(
+				vl.command_buffers[vl.image_index],
+				vl.swap.images[vl.image_index],
+				VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
+				0,
+				VK_IMAGE_LAYOUT_GENERAL,
+				VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
+				VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+				VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
+				(VkImageSubresourceRange){ VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 });
 	
     VK_CHECK(vkEndCommandBuffer(vl.command_buffers[vl.image_index]));
 
