@@ -92,8 +92,10 @@ typedef struct FrameBufferObject
 	b32 has_depth;
 	FrameBufferAttachment attachments[MAX_ATTACHMENTS_COUNT]; //pos,color,normal?
 	u32 attachment_count;
-	VkRenderPass renderpass;
+	VkRenderPass render_renderpass;
+	VkRenderPass clear_renderpass;
 }FrameBufferObject;
+FrameBufferObject fbo1;
 
 
 
@@ -373,7 +375,8 @@ void fbo_cleanup(FrameBufferObject *fbo)
 	if (fbo->has_depth)cleanup_fbo_attachment(&fbo->depth_attachment);
 	for (u32 i = 0; i < attachment_count; ++i)
         vkDestroyFramebuffer(vl.device, fbo->framebuffers[i], NULL);
-	vkDestroyRenderPass(vl.device, fbo->renderpass, NULL);
+	vkDestroyRenderPass(vl.device, fbo->clear_renderpass, NULL);
+	vkDestroyRenderPass(vl.device, fbo->render_renderpass, NULL);
 }
 
 
@@ -434,7 +437,7 @@ typedef struct PipelineBuilder
 	VkViewport viewport;
 	VkRect2D scissor;
 	VkPipelineRasterizationStateCreateInfo rasterizer;
-	VkPipelineColorBlendAttachmentState color_blend_attachment;
+	VkPipelineColorBlendAttachmentState color_blend_attachments[4];
 	VkPipelineMultisampleStateCreateInfo multisampling;
 	VkPipelineLayout pipeline_layout;
 }PipelineBuilder;
@@ -609,7 +612,7 @@ VkRenderingInfoKHR rendering_info_basic(void)
     return rendering_info; //this is not safe, pointer to stack allocated variables!
 }
 
-VkPipeline build_pipeline(VkDevice device, PipelineBuilder p,VkRenderPass render_pass)
+VkPipeline build_pipeline(VkDevice device, PipelineBuilder p,VkRenderPass render_pass, u32 out_attachment_count)
 {
 	//------these are not used because they are dynamic rn!-------
     VkViewport viewport = viewport_basic();
@@ -649,7 +652,7 @@ VkPipeline build_pipeline(VkDevice device, PipelineBuilder p,VkRenderPass render
 	
 	color_blending.logicOpEnable = VK_FALSE;
 	color_blending.logicOp = VK_LOGIC_OP_COPY;
-	color_blending.attachmentCount = 1;
+	color_blending.attachmentCount = out_attachment_count;
 	VkAttachmentDescription color_attachment = {0};
     color_attachment.format = vl.swap.image_format;
     color_attachment.samples = VK_SAMPLE_COUNT_1_BIT;
@@ -659,7 +662,7 @@ VkPipeline build_pipeline(VkDevice device, PipelineBuilder p,VkRenderPass render
     color_attachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
     color_attachment.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
     color_attachment.finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
-	color_blending.pAttachments = &p.color_blend_attachment;
+	color_blending.pAttachments = p.color_blend_attachments;
 	
 
     VkDynamicState dynamic_state_enables[] =
@@ -1626,8 +1629,8 @@ void create_descriptor_pool(VkDescriptorPool *descriptor_pool,ShaderObject *vert
 	buf_free(pool_size);
 }
 
-internal VkClearValue clear_values[2];
-VkRenderPassBeginInfo rp_info(VkRenderPass rp, VkFramebuffer fbo)
+internal VkClearValue clear_values[5];
+VkRenderPassBeginInfo rp_info(VkRenderPass rp, VkFramebuffer fbo, u32 attachment_count)
 {
     VkRenderPassBeginInfo rp_info = { 0 };
 
@@ -1635,15 +1638,17 @@ VkRenderPassBeginInfo rp_info(VkRenderPass rp, VkFramebuffer fbo)
     rp_info.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
     rp_info.renderPass = rp;
     rp_info.framebuffer = fbo; //we bind a _framebuffer_ to a render pass
+
     rp_info.renderArea.offset.x = 0;
     rp_info.renderArea.offset.y = 0;
     rp_info.renderArea.extent = vl.swap.extent;
 #ifdef __cplusplus
-	clear_values[0].color = {{0.0f, 0.0f, 0.0f, 1.0f}};
-	clear_values[1].depthStencil = {1.0f, 0};
+    for (u32 i = 0; i < attachment_count; ++i)
+        clear_values[i].color = {{0.0f, 0.0f, 0.0f, 1.0f}};
+	clear_values[attachment_count].depthStencil = {1.0f, 0};
 #else
-	clear_values[0].color = (VkClearColorValue){{0.0f, 0.0f, 0.0f, 1.0f}};
-	clear_values[1].depthStencil = (VkClearDepthStencilValue){1.0f, 0};
+	for (u32 i = 0; i < attachment_count; ++i) clear_values[i].color = (VkClearColorValue){{0.0f, 0.0f, 0.0f, 1.0f}};
+	clear_values[attachment_count].depthStencil = (VkClearDepthStencilValue){1.0f, 0};
 #endif
     rp_info.clearValueCount = array_count(clear_values);
     rp_info.pClearValues = clear_values;
@@ -1792,7 +1797,8 @@ void vl_create_command_pool(void)
 
 void render_fullscreen(VkCommandBuffer command_buf, u32 image_index)
 {    
-    VkRenderPassBeginInfo renderpass_info = rp_info(vl.render_pass_basic, vl.swap.framebuffers[vl.image_index]);
+    //VkRenderPassBeginInfo renderpass_info = rp_info(vl.render_pass_basic, vl.swap.framebuffers[vl.image_index], 1);
+    VkRenderPassBeginInfo renderpass_info = rp_info(fbo1.render_renderpass, fbo1.framebuffers[vl.image_index], 2);
     vkCmdBeginRenderPass(command_buf, &renderpass_info, VK_SUBPASS_CONTENTS_INLINE);
 
 
@@ -2173,15 +2179,17 @@ FrameBufferAttachment create_color_attachment(u32 width, u32 height, VkFormat fo
 }
 
 
-void fbo_init(FrameBufferObject *fbo)
+void fbo_init(FrameBufferObject *fbo, u32 attachment_count)
 {
 	fbo->width = vl.swap.extent.width;
 	fbo->height = vl.swap.extent.height;
 	fbo->depth_attachment = create_depth_attachment(fbo->width, fbo->height);
 	fbo->has_depth = TRUE;
-	fbo->attachments[0] = create_color_attachment(fbo->width, fbo->height, vl.swap.image_format);
-	fbo->attachment_count = 1;
-    VkRenderPass rp = { 0 };
+    for (u32 i = 0 ; i < attachment_count; ++i)
+        fbo->attachments[i] = create_color_attachment(fbo->width, fbo->height, vl.swap.image_format);
+	fbo->attachment_count = attachment_count;
+    fbo->clear_renderpass =create_render_pass(VK_ATTACHMENT_LOAD_OP_CLEAR,VK_IMAGE_LAYOUT_UNDEFINED,VK_IMAGE_LAYOUT_GENERAL, attachment_count, TRUE);
+    fbo->render_renderpass =create_render_pass(VK_ATTACHMENT_LOAD_OP_LOAD,VK_IMAGE_LAYOUT_GENERAL,VK_IMAGE_LAYOUT_GENERAL, attachment_count, TRUE);
 	//now create the  framebuffers
 	for (u32 i=0;i <vl.swap.image_count; ++i)
 	{
@@ -2194,8 +2202,8 @@ void fbo_init(FrameBufferObject *fbo)
 		
 		VkFramebufferCreateInfo fbo_info = {0};
 		fbo_info.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
-        fbo_info.renderPass = rp;
-		fbo_info.attachmentCount = 2; //base case!
+        fbo_info.renderPass = fbo->clear_renderpass;
+		fbo_info.attachmentCount = attachment_count + 1; //base case!
 		fbo_info.pAttachments = attachments;
 		fbo_info.width = vl.swap.extent.width;
 		fbo_info.height = vl.swap.extent.height;
@@ -2249,13 +2257,16 @@ void pipeline_build_basic_no_reflect(PipelineObject *p,const char *vert, const c
 	pb.input_asm = pipe_input_assembly_create_info((VkPrimitiveTopology)topology);
 	pb.rasterizer = pipe_rasterization_state_create_info(VK_POLYGON_MODE_FILL);
 	pb.multisampling = pipe_multisampling_state_create_info();
-	pb.color_blend_attachment = pipe_color_blend_attachment_state();
+	pb.color_blend_attachments[0] = pipe_color_blend_attachment_state();
+	pb.color_blend_attachments[1] = pipe_color_blend_attachment_state();
+	pb.color_blend_attachments[2] = pipe_color_blend_attachment_state();
+	pb.color_blend_attachments[3] = pipe_color_blend_attachment_state();
 
     VkDescriptorSetLayout layout = shader_create_descriptor_set_layout(&p->vert_shader, &p->frag_shader, 1);
     VkPipelineLayoutCreateInfo info = pipe_layout_create_info(&layout, 1);
 	VK_CHECK(vkCreatePipelineLayout(vl.device, &info, NULL, &pb.pipeline_layout));
 	VK_CHECK(vkCreatePipelineLayout(vl.device, &info, NULL, &p->pipeline_layout));
-	p->pipeline = build_pipeline(vl.device, pb, vl.render_pass_basic);
+	p->pipeline = build_pipeline(vl.device, pb, fbo1.render_renderpass, p->frag_shader.info.out_var_count);
 }
 
 
@@ -2282,7 +2293,10 @@ void pipeline_build_basic(PipelineObject *p,const char *vert, const char *frag, 
 	pb.input_asm = pipe_input_assembly_create_info((VkPrimitiveTopology)topology);
 	pb.rasterizer = pipe_rasterization_state_create_info(VK_POLYGON_MODE_FILL);
 	pb.multisampling = pipe_multisampling_state_create_info();
-	pb.color_blend_attachment = pipe_color_blend_attachment_state();
+	pb.color_blend_attachments[0] = pipe_color_blend_attachment_state();
+	pb.color_blend_attachments[1] = pipe_color_blend_attachment_state();
+	pb.color_blend_attachments[2] = pipe_color_blend_attachment_state();
+	pb.color_blend_attachments[3] = pipe_color_blend_attachment_state();
 
     //make shader uniform variables to a descriptor set layout and configure the pipeline layout
     //(since we don't use push constants, a descriptor set layout is all that's needed)
@@ -2290,7 +2304,9 @@ void pipeline_build_basic(PipelineObject *p,const char *vert, const char *frag, 
     VkPipelineLayoutCreateInfo info = pipe_layout_create_info(&layout, 1);
 	VK_CHECK(vkCreatePipelineLayout(vl.device, &info, NULL, &pb.pipeline_layout));
 	VK_CHECK(vkCreatePipelineLayout(vl.device, &info, NULL, &p->pipeline_layout));
-	p->pipeline = build_pipeline(vl.device, pb, vl.render_pass_basic);
+    VkRenderPass rp = 
+        create_render_pass(VK_ATTACHMENT_LOAD_OP_LOAD,VK_IMAGE_LAYOUT_GENERAL,VK_IMAGE_LAYOUT_GENERAL,p->frag_shader.info.out_var_count, TRUE);
+	p->pipeline = build_pipeline(vl.device, pb, rp, p->frag_shader.info.out_var_count);
 
 
     for (u32 i = 0;i < vl.swap.image_count; ++i)
@@ -2362,7 +2378,7 @@ void ubo_manager_reset(u32 image_index)
 
 void render_cube_immediate(VkCommandBuffer command_buf, u32 image_index, PipelineObject *p, mat4 model)
 {
-    VkRenderPassBeginInfo rp_inf = rp_info(vl.render_pass_basic, vl.swap.framebuffers[vl.image_index]);
+    VkRenderPassBeginInfo rp_inf = rp_info(vl.render_pass_basic, vl.swap.framebuffers[vl.image_index], 1);
     vkCmdBeginRenderPass(command_buf, &rp_inf, VK_SUBPASS_CONTENTS_INLINE);
 
 
@@ -2421,7 +2437,7 @@ void render_cube_immediate(VkCommandBuffer command_buf, u32 image_index, Pipelin
 
 void render_def_vbo(VkCommandBuffer command_buf, u32 image_index, float *mvp, vec4 color, DataBuffer *vbo, DataBuffer *ibo,u32 vertex_offset, u32 index_offset, TextureObject *tex, f32 ww, f32 wh, u32 vbo_updated)
 {
-    VkRenderPassBeginInfo rp_inf = rp_info(vl.render_pass_basic, vl.swap.framebuffers[vl.image_index]);
+    VkRenderPassBeginInfo rp_inf = rp_info(vl.render_pass_basic, vl.swap.framebuffers[vl.image_index], 1);
     vkCmdBeginRenderPass(vl.command_buffers[vl.image_index], &rp_inf, VK_SUBPASS_CONTENTS_INLINE);
 
 
@@ -2577,6 +2593,7 @@ void vl_recreate_swapchain(void)
     vl_create_swapchain();
     vl_create_swapchain_image_views();
 	vl.render_pass_basic = create_render_pass(VK_ATTACHMENT_LOAD_OP_LOAD,VK_IMAGE_LAYOUT_GENERAL,VK_IMAGE_LAYOUT_GENERAL, 1, TRUE);
+	vl.swap.rp_begin = create_render_pass(VK_ATTACHMENT_LOAD_OP_CLEAR,VK_IMAGE_LAYOUT_UNDEFINED,VK_IMAGE_LAYOUT_GENERAL, 1, TRUE);
     
     
 	vl_base_pipelines_init();
@@ -2727,12 +2744,11 @@ void vulkan_layer_init(void)
 	
 }
 
-FrameBufferObject fbo1;
 int vulkan_init(void) {
 	vulkan_layer_init();
     //vkCmdBeginRenderingKHR = (vkGetInstanceProcAddr(vl.instance, "vkCmdBeginRenderingKHR"));
     //vkCmdEndRenderingKHR = (PFN_vkCmdEndRenderingKHR)vkGetInstanceProcAddr(vl.instance, "vkCmdEndRenderingKHR");
-	//fbo_init(&fbo1);
+	fbo_init(&fbo1, 2);
 	//fbo_cleanup(&fbo1);
 #ifdef VK_STANDALONE
     sample_texture = create_texture_image("../assets/test.png",VK_FORMAT_R8G8B8A8_SRGB);
@@ -2798,7 +2814,6 @@ void frame_start(void)
     VK_CHECK(vkBeginCommandBuffer(vl.command_buffers[vl.image_index], &begin_info));
 
 
-    //transition_image_layout(vl.swap.images[vl.image_index], vl.swap.image_format, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL);
     /*
     insert_image_memory_barrier(
 				vl.command_buffers[vl.image_index],
@@ -2812,11 +2827,15 @@ void frame_start(void)
 				(VkImageSubresourceRange){ VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 });
     */
     ///*
-    VkRenderPassBeginInfo renderpass_info = rp_info(vl.swap.rp_begin, vl.swap.framebuffers[vl.image_index]);
+    VkRenderPassBeginInfo renderpass_info = rp_info(vl.swap.rp_begin, vl.swap.framebuffers[vl.image_index], 1);
     vkCmdBeginRenderPass(vl.command_buffers[vl.image_index], &renderpass_info, VK_SUBPASS_CONTENTS_INLINE);
 	vkCmdEndRenderPass(vl.command_buffers[vl.image_index]);
     //*/
 
+    renderpass_info = rp_info(fbo1.clear_renderpass, fbo1.framebuffers[vl.image_index], fbo1.attachment_count);
+    vkCmdBeginRenderPass(vl.command_buffers[vl.image_index], &renderpass_info, VK_SUBPASS_CONTENTS_INLINE);
+	vkCmdEndRenderPass(vl.command_buffers[vl.image_index]);
+ 
 }
 void frame_end(void)
 {
@@ -2957,6 +2976,8 @@ void cleanup(void)
     vkDestroySurfaceKHR(vl.instance, vl.surface, NULL);
     DestroyDebugUtilsMessengerEXT(vl.instance, vl.debug_msg, NULL);
     vkDestroyInstance(vl.instance, NULL);
+
+    vkDestroyRenderPass(vl.device, vl.swap.rp_begin, NULL);
 	//window_destroy(&wnd);
 }
 
