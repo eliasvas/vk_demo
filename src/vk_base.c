@@ -96,7 +96,7 @@ typedef struct FrameBufferObject
 	VkRenderPass render_renderpass;
 	VkRenderPass clear_renderpass;
 }FrameBufferObject;
-FrameBufferObject fbo1;
+
 
 
 
@@ -278,7 +278,7 @@ VulkanLayer vl;
 #else 
 extern VulkanLayer vl;
 #endif
-
+FrameBufferObject fbo1;
 //TODO: finish this or find another way to infer size of a shader variable
 u32 get_format_size(VkFormat format)
 {
@@ -588,8 +588,11 @@ VkRenderingInfoKHR rendering_info_basic(void)
         width = vk_getHeight();
         width = vk_getWidth();
 #endif
- 
+#ifdef VK_STANDALONE
     rendering_info.renderArea  = (VkRect2D){0,0,width, height};
+#else
+    rendering_info.renderArea = { 0,0,width, height };
+#endif
     rendering_info.layerCount = 1;
     rendering_info.pColorAttachments = &color_attachment_info;
     rendering_info.pDepthAttachment = &depth_attachment_info;
@@ -1615,7 +1618,7 @@ void create_descriptor_pool(VkDescriptorPool *descriptor_pool,ShaderObject *vert
 }
 
 internal VkClearValue clear_values[5];
-VkRenderPassBeginInfo rp_info(VkRenderPass rp, VkFramebuffer fbo, u32 attachment_count)
+VkRenderPassBeginInfo rp_info(VkRenderPass rp, VkFramebuffer fbo, u32 attachment_count, VkExtent2D extent)
 {
     VkRenderPassBeginInfo rp_info = { 0 };
 
@@ -1626,7 +1629,7 @@ VkRenderPassBeginInfo rp_info(VkRenderPass rp, VkFramebuffer fbo, u32 attachment
 
     rp_info.renderArea.offset.x = 0;
     rp_info.renderArea.offset.y = 0;
-    rp_info.renderArea.extent = vl.swap.extent;
+    rp_info.renderArea.extent = extent;
 #ifdef __cplusplus
     for (u32 i = 0; i < attachment_count; ++i)
         clear_values[i].color = {{0.0f, 0.0f, 0.0f, 1.0f}};
@@ -1782,7 +1785,7 @@ void vl_create_command_pool(void)
 void render_fullscreen(VkCommandBuffer command_buf, u32 image_index)
 {    
     //VkRenderPassBeginInfo renderpass_info = rp_info(vl.render_pass_basic, vl.swap.framebuffers[vl.image_index], 1);
-    VkRenderPassBeginInfo renderpass_info = rp_info(fbo1.render_renderpass, fbo1.framebuffer, fbo1.attachment_count);
+    VkRenderPassBeginInfo renderpass_info = rp_info(fbo1.render_renderpass, fbo1.framebuffer, fbo1.attachment_count, vl.swap.extent);
     vkCmdBeginRenderPass(command_buf, &renderpass_info, VK_SUBPASS_CONTENTS_INLINE);
 
 
@@ -2131,7 +2134,9 @@ TextureObject create_depth_attachment(u32 width, u32 height)
 		VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, &depth_attachment.image, &depth_attachment.mem);
 	
 	depth_attachment.view = create_image_view(depth_attachment.image, depth_attachment.format, VK_IMAGE_ASPECT_DEPTH_BIT);
-	//depth_attachment.samplers[0] = create_sampler();
+    depth_attachment.width = width;
+    depth_attachment.height = height;
+    //depth_attachment.samplers[0] = create_sampler();
 	return depth_attachment;
 }
 
@@ -2151,12 +2156,49 @@ TextureObject create_color_attachment(u32 width, u32 height, VkFormat format)
     VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, &color_attachment.image, &color_attachment.mem);
     
     color_attachment.view = create_image_view(color_attachment.image, color_attachment.format, VK_IMAGE_ASPECT_COLOR_BIT);
-
+    color_attachment.width = width;
+    color_attachment.height = height;
 
 	return color_attachment;
 }
 
 
+void fbo_init_initialized_attachments(FrameBufferObject *fbo,TextureObject *image_attachments, u32 attachment_count, TextureObject *da, u32 width, u32 height)
+{
+	fbo->width = width;
+	fbo->height = height;
+    if (da)
+        fbo->depth_attachment = *da; 
+    else 
+        fbo->depth_attachment = create_depth_attachment(fbo->width, fbo->height);
+	fbo->has_depth = TRUE;
+    for (u32 i = 0 ; i < attachment_count; ++i)
+        fbo->attachments[i] = image_attachments[i];
+	fbo->attachment_count = attachment_count;
+    fbo->clear_renderpass =create_render_pass(VK_ATTACHMENT_LOAD_OP_CLEAR,VK_IMAGE_LAYOUT_UNDEFINED,VK_IMAGE_LAYOUT_GENERAL, attachment_count, TRUE);
+    fbo->render_renderpass =create_render_pass(VK_ATTACHMENT_LOAD_OP_LOAD,VK_IMAGE_LAYOUT_GENERAL,VK_IMAGE_LAYOUT_GENERAL, attachment_count, TRUE);
+	//now create the  framebuffers
+    
+    VkImageView *attachments = NULL;
+    
+    for (u32 j = 0; j < fbo->attachment_count; ++j)
+        buf_push(attachments, fbo->attachments[j].view);
+    buf_push(attachments, fbo->depth_attachment.view);
+    
+    
+    VkFramebufferCreateInfo fbo_info = {0};
+    fbo_info.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
+    fbo_info.renderPass = fbo->clear_renderpass;
+    fbo_info.attachmentCount = attachment_count + 1; //base case!
+    fbo_info.pAttachments = attachments;
+    fbo_info.width = fbo->width;
+    fbo_info.height = fbo->height;
+    fbo_info.layers = 1;
+    
+    VK_CHECK(vkCreateFramebuffer(vl.device, &fbo_info, NULL, &fbo->framebuffer));
+    
+    buf_free(attachments);
+}
 void fbo_init(FrameBufferObject *fbo, u32 attachment_count)
 {
 	fbo->width = vl.swap.extent.width;
@@ -2170,29 +2212,25 @@ void fbo_init(FrameBufferObject *fbo, u32 attachment_count)
     fbo->render_renderpass =create_render_pass(VK_ATTACHMENT_LOAD_OP_LOAD,VK_IMAGE_LAYOUT_GENERAL,VK_IMAGE_LAYOUT_GENERAL, attachment_count, TRUE);
 	//now create the  framebuffers
     
-    //CHECK CHECK CHECK
-	//for (u32 i=0;i <vl.swap.image_count; ++i)
-	{
-		VkImageView *attachments = NULL;
-		
-		for (u32 j = 0; j < fbo->attachment_count; ++j)
-			buf_push(attachments, fbo->attachments[j].view);
-		buf_push(attachments, fbo->depth_attachment.view);
-		
-		
-		VkFramebufferCreateInfo fbo_info = {0};
-		fbo_info.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
-        fbo_info.renderPass = fbo->clear_renderpass;
-		fbo_info.attachmentCount = attachment_count + 1; //base case!
-		fbo_info.pAttachments = attachments;
-		fbo_info.width = vl.swap.extent.width;
-		fbo_info.height = vl.swap.extent.height;
-		fbo_info.layers = 1;
-		
-		VK_CHECK(vkCreateFramebuffer(vl.device, &fbo_info, NULL, &fbo->framebuffer));
-		
-		buf_free(attachments);
-	}
+    VkImageView *attachments = NULL;
+    
+    for (u32 j = 0; j < fbo->attachment_count; ++j)
+        buf_push(attachments, fbo->attachments[j].view);
+    buf_push(attachments, fbo->depth_attachment.view);
+    
+    
+    VkFramebufferCreateInfo fbo_info = {0};
+    fbo_info.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
+    fbo_info.renderPass = fbo->clear_renderpass;
+    fbo_info.attachmentCount = attachment_count + 1; //base case!
+    fbo_info.pAttachments = attachments;
+    fbo_info.width = vl.swap.extent.width;
+    fbo_info.height = vl.swap.extent.height;
+    fbo_info.layers = 1;
+    
+    VK_CHECK(vkCreateFramebuffer(vl.device, &fbo_info, NULL, &fbo->framebuffer));
+    
+    buf_free(attachments);
 }
 
 DataBuffer *create_uniform_buffers(ShaderMetaInfo *info, u32 buffer_count) //=vl.swap.image_count
@@ -2358,7 +2396,7 @@ void ubo_manager_reset(u32 image_index)
 
 void render_cube_immediate(VkCommandBuffer command_buf, u32 image_index, PipelineObject *p, mat4 model)
 {
-    VkRenderPassBeginInfo rp_inf = rp_info(vl.render_pass_basic, vl.swap.framebuffers[vl.image_index], 1);
+    VkRenderPassBeginInfo rp_inf = rp_info(vl.render_pass_basic, vl.swap.framebuffers[vl.image_index], 1, vl.swap.extent);
     vkCmdBeginRenderPass(command_buf, &rp_inf, VK_SUBPASS_CONTENTS_INLINE);
 
 
@@ -2417,7 +2455,7 @@ void render_cube_immediate(VkCommandBuffer command_buf, u32 image_index, Pipelin
 
 void render_def_vbo(VkCommandBuffer command_buf, u32 image_index, float *mvp, vec4 color, DataBuffer *vbo, DataBuffer *ibo,u32 vertex_offset, u32 index_offset, TextureObject *tex, f32 ww, f32 wh, u32 vbo_updated)
 {
-    VkRenderPassBeginInfo rp_inf = rp_info(vl.render_pass_basic, vl.swap.framebuffers[vl.image_index], 1);
+    VkRenderPassBeginInfo rp_inf = rp_info(vl.render_pass_basic, vl.swap.framebuffers[vl.image_index], 1, vl.swap.extent);
     vkCmdBeginRenderPass(vl.command_buffers[vl.image_index], &rp_inf, VK_SUBPASS_CONTENTS_INLINE);
 
 
@@ -2720,7 +2758,14 @@ int vulkan_init(void) {
 	vulkan_layer_init();
     //vkCmdBeginRenderingKHR = (vkGetInstanceProcAddr(vl.instance, "vkCmdBeginRenderingKHR"));
     //vkCmdEndRenderingKHR = (PFN_vkCmdEndRenderingKHR)vkGetInstanceProcAddr(vl.instance, "vkCmdEndRenderingKHR");
-	fbo_init(&fbo1, 2);
+    
+    TextureObject textures[2];
+
+    textures[0] = create_color_attachment(vl.swap.extent.width, vl.swap.extent.height, vl.swap.image_format);
+    textures[1] = create_color_attachment(vl.swap.extent.width, vl.swap.extent.height, vl.swap.image_format);
+	TextureObject depth_attachment = create_depth_attachment(vl.swap.extent.width, vl.swap.extent.height);
+    fbo_init_initialized_attachments(&fbo1,textures, 2, &depth_attachment, textures[0].width, textures[0].height);
+	//fbo_init(&fbo1, 2);
 	//fbo_cleanup(&fbo1);
 #ifdef VK_STANDALONE
     sample_texture = create_texture_image("../assets/test.png",VK_FORMAT_R8G8B8A8_SRGB);
@@ -2799,12 +2844,12 @@ void frame_start(void)
 				(VkImageSubresourceRange){ VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 });
     */
     ///*
-    VkRenderPassBeginInfo renderpass_info = rp_info(vl.swap.rp_begin, vl.swap.framebuffers[vl.image_index], 1);
+    VkRenderPassBeginInfo renderpass_info = rp_info(vl.swap.rp_begin, vl.swap.framebuffers[vl.image_index], 1, vl.swap.extent);
     vkCmdBeginRenderPass(vl.command_buffers[vl.image_index], &renderpass_info, VK_SUBPASS_CONTENTS_INLINE);
 	vkCmdEndRenderPass(vl.command_buffers[vl.image_index]);
     //*/
 
-    renderpass_info = rp_info(fbo1.clear_renderpass, fbo1.framebuffer, fbo1.attachment_count);
+    renderpass_info = rp_info(fbo1.clear_renderpass, fbo1.framebuffer, fbo1.attachment_count, vl.swap.extent);
     vkCmdBeginRenderPass(vl.command_buffers[vl.image_index], &renderpass_info, VK_SUBPASS_CONTENTS_INLINE);
 	vkCmdEndRenderPass(vl.command_buffers[vl.image_index]);
  
@@ -2821,8 +2866,12 @@ insert_image_memory_barrier(
 				VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
 				VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
 				VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
+#ifdef VK_STANDALONE
 				(VkImageSubresourceRange){ VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 });
-	
+#else
+
+				{ VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 });
+#endif
     VK_CHECK(vkEndCommandBuffer(vl.command_buffers[vl.image_index]));
 
     //mark image as used by _this frame_
