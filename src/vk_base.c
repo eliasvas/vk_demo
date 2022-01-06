@@ -55,18 +55,18 @@ s32 window_h = 600;
 
 #define MAX_SWAP_IMAGE_COUNT 4
 
-typedef struct FrameBufferAttachment 
-{ 
-	VkImage image;
-	//VkExtent2D extent;
-	VkImageView view;
-	VkSampler sampler; //who knows? we might need to sample the fbo
-	VkDeviceMemory mem;
-	VkFormat format;
-	u32 image_count;
-}FrameBufferAttachment;
 
 
+typedef struct TextureObject {
+    VkSampler sampler;
+    VkImage image;
+    VkImageLayout image_layout;
+    VkDeviceMemory mem;
+    VkImageView view;
+    VkFormat format;
+    u32 width, height;
+    u32 mip_levels;
+} TextureObject;
 
 
 typedef struct Swapchain
@@ -77,7 +77,7 @@ typedef struct Swapchain
 	VkExtent2D extent;
 	VkImageView *image_views;
 	VkFramebuffer *framebuffers;
-	FrameBufferAttachment depth_attachment;
+	TextureObject depth_attachment;
 	u32 image_count;
 	
 	VkRenderPass rp_begin;
@@ -89,9 +89,9 @@ typedef struct FrameBufferObject
 {
 	u32 width, height; //should framebuffers be RESIZED when the swapchain resizes??????
 	VkFramebuffer framebuffer;
-	FrameBufferAttachment depth_attachment;
+	TextureObject depth_attachment;
 	b32 has_depth;
-	FrameBufferAttachment attachments[MAX_ATTACHMENTS_COUNT]; //pos,color,normal?
+	TextureObject attachments[MAX_ATTACHMENTS_COUNT]; //pos,color,normal?
 	u32 attachment_count;
 	VkRenderPass render_renderpass;
 	VkRenderPass clear_renderpass;
@@ -240,17 +240,6 @@ typedef struct PipelineObject
     VkDescriptorSet* descriptor_sets;
     DataBuffer* uniform_buffers;
 }PipelineObject;
-
-typedef struct TextureObject {
-    VkSampler sampler;
-    VkImage image;
-    VkImageLayout image_layout;
-    VkDeviceMemory device_mem;
-    VkImageView view;
-    u32 width, height;
-    u32 mip_levels;
-} TextureObject;
-
 typedef struct VulkanLayer
 {
     VkInstance instance;
@@ -355,25 +344,21 @@ u32 get_attr_desc(VkVertexInputAttributeDescription *attr_desc, ShaderMetaInfo *
 }
 
 
-void cleanup_fbo_attachment(FrameBufferAttachment *a)
+void texture_cleanup(TextureObject *t)
 {
-	for (u32 i = 0; i <a->image_count; ++i)
-	{
-		vkDestroyImage(vl.device, a->image, NULL);
-		vkFreeMemory(vl.device, a->mem, NULL);
-		vkDestroyImageView(vl.device, a->view, NULL);
-		vkDestroySampler(vl.device, a->sampler, NULL);
-	}
+    vkDestroySampler(vl.device, t->sampler, NULL);
+    vkDestroyImageView(vl.device, t->view, NULL);
+    vkDestroyImage(vl.device, t->image, NULL);
+    vkFreeMemory(vl.device, t->mem, NULL);
 }
-
 
 void fbo_cleanup(FrameBufferObject *fbo)
 {
 
 	u32 attachment_count = minimum(4, fbo->attachment_count);
 	for (u32 i = 0; i < attachment_count; ++i)
-		cleanup_fbo_attachment(&fbo->attachments[i]);
-	if (fbo->has_depth)cleanup_fbo_attachment(&fbo->depth_attachment);
+		texture_cleanup(&fbo->attachments[i]);
+	if (fbo->has_depth)texture_cleanup(&fbo->depth_attachment);
     vkDestroyFramebuffer(vl.device, fbo->framebuffer, NULL);
 	vkDestroyRenderPass(vl.device, fbo->clear_renderpass, NULL);
 	vkDestroyRenderPass(vl.device, fbo->render_renderpass, NULL);
@@ -1379,7 +1364,7 @@ VkExtent2D choose_swap_extent(SwapChainSupportDetails details)
         return actual_extent;
     }
 }
-FrameBufferAttachment create_depth_attachment(u32 width, u32 height);
+TextureObject create_depth_attachment(u32 width, u32 height);
 VkRenderPass create_render_pass(VkAttachmentLoadOp load_op,VkImageLayout initial, 
           VkImageLayout final, u32 color_attachment_count, b32 depth_attachment_active);
 void vl_create_swapchain(void)
@@ -2132,14 +2117,13 @@ VkFormat find_depth_format(void)
 
 
 
-FrameBufferAttachment create_depth_attachment(u32 width, u32 height)
+TextureObject create_depth_attachment(u32 width, u32 height)
 {
 #ifdef __cplusplus
-	FrameBufferAttachment depth_attachment = {};
+	TextureObject depth_attachment = {};
 #else
-	FrameBufferAttachment depth_attachment = {0};
+	TextureObject depth_attachment = {0};
 #endif
-	depth_attachment.image_count = 1; //we only need one image, because we don't present it, meaning its available each frame as new
 	depth_attachment.format = find_depth_format();
 	
 	create_image(width, height, 
@@ -2153,26 +2137,21 @@ FrameBufferAttachment create_depth_attachment(u32 width, u32 height)
 
 
 
-FrameBufferAttachment create_color_attachment(u32 width, u32 height, VkFormat format)
+TextureObject create_color_attachment(u32 width, u32 height, VkFormat format)
 {
 #ifdef __cplusplus
-	FrameBufferAttachment color_attachment = {};
+	TextureObject color_attachment = {};
 #else
-	FrameBufferAttachment color_attachment = {0};
+	TextureObject color_attachment = {0};
 #endif
-	color_attachment.image_count = vl.swap.image_count;
 	color_attachment.format = format;
 	
-	for (u32 i = 0; i < color_attachment.image_count; ++i)
-	{
-		create_image(width, height, 
-		color_attachment.format, VK_IMAGE_TILING_OPTIMAL, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT, 
-		VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, &color_attachment.image, &color_attachment.mem);
-		
-		color_attachment.view = create_image_view(color_attachment.image, color_attachment.format, VK_IMAGE_ASPECT_COLOR_BIT);
-		//color_attachment.samplers[i] = create_sampler();
-	}
-	
+    create_image(width, height, 
+    color_attachment.format, VK_IMAGE_TILING_OPTIMAL, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT, 
+    VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, &color_attachment.image, &color_attachment.mem);
+    
+    color_attachment.view = create_image_view(color_attachment.image, color_attachment.format, VK_IMAGE_ASPECT_COLOR_BIT);
+
 
 	return color_attachment;
 }
@@ -2573,7 +2552,7 @@ void vl_cleanup_swapchain(void)
     for (u32 i = 0; i < vl.swap.image_count; ++i)
         vkDestroyImageView(vl.device, vl.swap.image_views[i], NULL);
     vkDestroySwapchainKHR(vl.device, vl.swap.swapchain, NULL);
-	cleanup_fbo_attachment(&vl.swap.depth_attachment);
+	texture_cleanup(&vl.swap.depth_attachment);
 	vkDestroyRenderPass(vl.device, vl.swap.rp_begin, NULL);
 }
 
@@ -2649,7 +2628,7 @@ TextureObject create_texture_image(char *filename, VkFormat format)
 	stbi_image_free(pixels);
 	//[4]: we create the VkImage that is undefined right now
 	create_image(tex_w, tex_h, format, VK_IMAGE_TILING_LINEAR, VK_IMAGE_USAGE_TRANSFER_DST_BIT 
-		| VK_IMAGE_USAGE_SAMPLED_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, &tex.image, &tex.device_mem);
+		| VK_IMAGE_USAGE_SAMPLED_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, &tex.image, &tex.mem);
 	
 	//[5]: we transition the images layout from undefined to dst_optimal
 	transition_image_layout(tex.image, format, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
@@ -2692,7 +2671,7 @@ TextureObject create_texture_image_wdata(u8* pixels,u32 tex_w, u32 tex_h,u32 com
     //[3]: we free the cpu side image, we don't need it
     //[4]: we create the VkImage that is undefined right now
     create_image(tex_w, tex_h, format, VK_IMAGE_TILING_LINEAR, VK_IMAGE_USAGE_TRANSFER_DST_BIT
-        | VK_IMAGE_USAGE_SAMPLED_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, &tex.image, &tex.device_mem);
+        | VK_IMAGE_USAGE_SAMPLED_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, &tex.image, &tex.mem);
 
     //[5]: we transition the images layout from undefined to dst_optimal
     transition_image_layout(tex.image, format, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
@@ -2716,14 +2695,6 @@ TextureObject create_texture_image_wdata(u8* pixels,u32 tex_w, u32 tex_h,u32 com
     tex.height = tex_h;
 
     return tex;
-}
-
-void texture_image_cleanup(TextureObject *t)
-{
-    vkDestroySampler(vl.device, t->sampler, NULL);
-    vkDestroyImageView(vl.device, t->view, NULL);
-    vkDestroyImage(vl.device, t->image, NULL);
-    vkFreeMemory(vl.device, t->device_mem, NULL);
 }
 void vulkan_layer_init(void)
 {
