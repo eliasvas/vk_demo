@@ -683,6 +683,7 @@ VkPipeline build_pipeline(VkDevice device, PipelineBuilder p,VkRenderPass render
 	pipeline_info.subpass = 0;
 	pipeline_info.basePipelineHandle = VK_NULL_HANDLE;
 
+    /*
     //Dynamic Rendering stuff
     VkPipelineRenderingCreateInfoKHR pipe_rendering_create_info = {0};
     pipe_rendering_create_info.sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO_KHR;
@@ -692,6 +693,7 @@ VkPipeline build_pipeline(VkDevice device, PipelineBuilder p,VkRenderPass render
     pipe_rendering_create_info.stencilAttachmentFormat = vl.swap.depth_attachment.format;
 
     pipeline_info.pNext = &pipe_rendering_create_info;
+    */
 
 
 
@@ -1529,7 +1531,7 @@ VkDescriptorSet *create_descriptor_sets(VkDescriptorSetLayout layout, ShaderObje
 		VkDescriptorImageInfo image_infos[4] = {0};
 		for (u32 t = 0; t < texture_count && textures; ++t)
 		{
-			image_infos[t].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+			image_infos[t].imageLayout = VK_IMAGE_LAYOUT_GENERAL;
 			image_infos[t].sampler = textures[t].sampler;
 			image_infos[t].imageView = textures[t].view;
         }
@@ -1899,7 +1901,7 @@ VkImageUsageFlags usage, VkMemoryPropertyFlags properties, VkImage *image, VkDev
 	image_info.format = format;
 	image_info.tiling = tiling;
 	image_info.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-	image_info.usage = usage;
+	image_info.usage = usage | VK_IMAGE_USAGE_SAMPLED_BIT;
 	image_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
 	image_info.samples = VK_SAMPLE_COUNT_1_BIT;
 	image_info.flags = 0;
@@ -2031,6 +2033,81 @@ void transition_image_layout(VkImage image, VkFormat format, VkImageLayout old_l
 	
 	end_single_time_commands(command_buf);
 }
+
+//for depth images
+void transition_dimage_layout(VkImage image, VkFormat format, VkImageLayout old_layout, VkImageLayout new_layout)
+{
+    VkCommandBuffer command_buf = begin_single_time_commands();
+
+    VkImageMemoryBarrier barrier = { 0 };
+    barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+    barrier.oldLayout = old_layout;
+    barrier.newLayout = new_layout;
+    barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+    barrier.image = image;
+    barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
+    barrier.subresourceRange.baseMipLevel = 0;
+    barrier.subresourceRange.levelCount = 1;
+    barrier.subresourceRange.baseArrayLayer = 0;
+    barrier.subresourceRange.layerCount = 1;
+
+    barrier.srcAccessMask = 0;
+    barrier.dstAccessMask = 0;
+
+    VkPipelineStageFlags src_stage;
+    VkPipelineStageFlags dst_stage;
+
+
+    if (old_layout == VK_IMAGE_LAYOUT_UNDEFINED && new_layout == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL) {
+        barrier.srcAccessMask = 0;
+        barrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+
+        src_stage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
+        dst_stage = VK_PIPELINE_STAGE_TRANSFER_BIT;
+    }
+    else if (old_layout == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL && new_layout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL) {
+        barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+        barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+
+        src_stage = VK_PIPELINE_STAGE_TRANSFER_BIT;
+        dst_stage = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+    }
+    else if (old_layout == VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL && new_layout == VK_IMAGE_LAYOUT_PRESENT_SRC_KHR) {
+        barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+        barrier.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+
+        src_stage = VK_PIPELINE_STAGE_TRANSFER_BIT;
+        dst_stage = VK_PIPELINE_STAGE_TRANSFER_BIT;
+    }
+    else if (old_layout == VK_IMAGE_LAYOUT_UNDEFINED && new_layout == VK_IMAGE_LAYOUT_GENERAL)
+    {
+        barrier.srcAccessMask = 0;
+        barrier.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+
+        src_stage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
+        dst_stage = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+    }
+    else {
+        barrier.srcAccessMask = 0;
+        barrier.dstAccessMask = 0;
+
+        src_stage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
+        dst_stage = VK_PIPELINE_STAGE_TRANSFER_BIT;
+    }
+
+    vkCmdPipelineBarrier(
+        command_buf,
+        src_stage, dst_stage,
+        0,
+        0, NULL,
+        0, NULL,
+        1, &barrier);
+
+
+    end_single_time_commands(command_buf);
+}
+
 void insert_image_memory_barrier(
 			VkCommandBuffer cmdbuffer,
 			VkImage image,
@@ -2119,6 +2196,7 @@ VkFormat find_depth_format(void)
 
 
 
+void create_texture_sampler(VkSampler* sampler);
 
 TextureObject create_depth_attachment(u32 width, u32 height)
 {
@@ -2130,12 +2208,17 @@ TextureObject create_depth_attachment(u32 width, u32 height)
 	depth_attachment.format = find_depth_format();
 	
 	create_image(width, height, 
-		depth_attachment.format, VK_IMAGE_TILING_OPTIMAL, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT, 
+		depth_attachment.format, VK_IMAGE_TILING_OPTIMAL, VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT,
 		VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, &depth_attachment.image, &depth_attachment.mem);
-	
+    transition_dimage_layout(depth_attachment.image, depth_attachment.format, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+    transition_dimage_layout(depth_attachment.image, depth_attachment.format,
+        VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_GENERAL);
+
 	depth_attachment.view = create_image_view(depth_attachment.image, depth_attachment.format, VK_IMAGE_ASPECT_DEPTH_BIT);
     depth_attachment.width = width;
     depth_attachment.height = height;
+    create_texture_sampler(&depth_attachment.sampler);
+    
     //depth_attachment.samplers[0] = create_sampler();
 	return depth_attachment;
 }
@@ -2152,13 +2235,17 @@ TextureObject create_color_attachment(u32 width, u32 height, VkFormat format)
 	color_attachment.format = format;
 	
     create_image(width, height, 
-    color_attachment.format, VK_IMAGE_TILING_OPTIMAL, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT, 
+    color_attachment.format, VK_IMAGE_TILING_OPTIMAL, VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
     VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, &color_attachment.image, &color_attachment.mem);
+    transition_image_layout(color_attachment.image, format, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+    transition_image_layout(color_attachment.image, format,
+        VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_GENERAL);
+    
     
     color_attachment.view = create_image_view(color_attachment.image, color_attachment.format, VK_IMAGE_ASPECT_COLOR_BIT);
     color_attachment.width = width;
     color_attachment.height = height;
-
+    create_texture_sampler(&color_attachment.sampler);
 	return color_attachment;
 }
 
@@ -2197,6 +2284,11 @@ void fbo_init_initialized_attachments(FrameBufferObject *fbo,TextureObject *imag
     
     VK_CHECK(vkCreateFramebuffer(vl.device, &fbo_info, NULL, &fbo->framebuffer));
     
+
+    //auto renderpass_info = rp_info(fbo1.clear_renderpass, fbo1.framebuffer, fbo1.attachment_count, vl.swap.extent);
+    //vkCmdBeginRenderPass(vl.command_buffers[vl.image_index], &renderpass_info, VK_SUBPASS_CONTENTS_INLINE);
+    //vkCmdEndRenderPass(vl.command_buffers[vl.image_index]);
+
     buf_free(attachments);
 }
 void fbo_init(FrameBufferObject *fbo, u32 attachment_count)
@@ -2208,8 +2300,8 @@ void fbo_init(FrameBufferObject *fbo, u32 attachment_count)
     for (u32 i = 0 ; i < attachment_count; ++i)
         fbo->attachments[i] = create_color_attachment(fbo->width, fbo->height, vl.swap.image_format);
 	fbo->attachment_count = attachment_count;
-    fbo->clear_renderpass =create_render_pass(VK_ATTACHMENT_LOAD_OP_CLEAR,VK_IMAGE_LAYOUT_UNDEFINED,VK_IMAGE_LAYOUT_GENERAL, attachment_count, TRUE);
-    fbo->render_renderpass =create_render_pass(VK_ATTACHMENT_LOAD_OP_LOAD,VK_IMAGE_LAYOUT_GENERAL,VK_IMAGE_LAYOUT_GENERAL, attachment_count, TRUE);
+    fbo->clear_renderpass =create_render_pass(VK_ATTACHMENT_LOAD_OP_CLEAR,VK_IMAGE_LAYOUT_UNDEFINED,VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, attachment_count, TRUE);
+    fbo->render_renderpass =create_render_pass(VK_ATTACHMENT_LOAD_OP_LOAD,VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, attachment_count, TRUE);
 	//now create the  framebuffers
     
     VkImageView *attachments = NULL;
@@ -2284,7 +2376,7 @@ void pipeline_build_basic_no_reflect(PipelineObject *p,const char *vert, const c
     VkPipelineLayoutCreateInfo info = pipe_layout_create_info(&layout, 1);
 	VK_CHECK(vkCreatePipelineLayout(vl.device, &info, NULL, &pb.pipeline_layout));
 	VK_CHECK(vkCreatePipelineLayout(vl.device, &info, NULL, &p->pipeline_layout));
-	p->pipeline = build_pipeline(vl.device, pb, fbo1.render_renderpass, p->frag_shader.info.out_var_count);
+	p->pipeline = build_pipeline(vl.device, pb, fbo1.clear_renderpass, p->frag_shader.info.out_var_count);
 }
 
 
@@ -2676,7 +2768,7 @@ TextureObject create_texture_image(char *filename, VkFormat format)
 	
 	//[7]: we transition the image layout so that it can be read by a shader
 	transition_image_layout(tex.image, format, 
-		VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+		VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_GENERAL);
 		
 	//[8]:cleanup the buffers (all data is now in the image)
 	buf_destroy(&idb);
@@ -2719,7 +2811,7 @@ TextureObject create_texture_image_wdata(u8* pixels,u32 tex_w, u32 tex_h,u32 com
 
     //[7]: we transition the image layout so that it can be read by a shader
     transition_image_layout(tex.image, format,
-        VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+        VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_GENERAL);
 
     //[8]:cleanup the buffers (all data is now in the image)
     buf_destroy(&idb);
@@ -2746,11 +2838,12 @@ void vulkan_layer_init(void)
     create_surface();
     vl_pick_physical_device();
     vl_create_logical_device();
+    vl_create_command_pool();
     vl_create_swapchain();
     vl_create_swapchain_image_views();
 	vl.render_pass_basic = create_render_pass(VK_ATTACHMENT_LOAD_OP_LOAD,VK_IMAGE_LAYOUT_GENERAL,VK_IMAGE_LAYOUT_GENERAL, 1, TRUE);
 	vl_swap_create_framebuffers();
-    vl_create_command_pool();
+    
 	
 }
 
@@ -2759,13 +2852,7 @@ int vulkan_init(void) {
     //vkCmdBeginRenderingKHR = (vkGetInstanceProcAddr(vl.instance, "vkCmdBeginRenderingKHR"));
     //vkCmdEndRenderingKHR = (PFN_vkCmdEndRenderingKHR)vkGetInstanceProcAddr(vl.instance, "vkCmdEndRenderingKHR");
     
-    TextureObject textures[2];
-
-    textures[0] = create_color_attachment(vl.swap.extent.width, vl.swap.extent.height, vl.swap.image_format);
-    textures[1] = create_color_attachment(vl.swap.extent.width, vl.swap.extent.height, vl.swap.image_format);
-	TextureObject depth_attachment = create_depth_attachment(vl.swap.extent.width, vl.swap.extent.height);
-    fbo_init_initialized_attachments(&fbo1,textures, 2, &depth_attachment, textures[0].width, textures[0].height);
-	//fbo_init(&fbo1, 2);
+    //fbo_init(&fbo1, 2);
 	//fbo_cleanup(&fbo1);
 #ifdef VK_STANDALONE
     sample_texture = create_texture_image("../assets/test.png",VK_FORMAT_R8G8B8A8_SRGB);
@@ -2775,7 +2862,6 @@ int vulkan_init(void) {
     sample_texture2 = create_texture_image("../resources/generic/textures/checkerboard.png", VK_FORMAT_R8G8B8A8_UNORM);
 #endif
 
-	vl_base_pipelines_init();
     ubo_manager_init(1000);
 	
 
@@ -2798,6 +2884,16 @@ int vulkan_init(void) {
     
     vl_create_command_buffers();
     create_sync_objects();
+
+
+    TextureObject textures[2];
+
+    textures[0] = create_color_attachment(vl.swap.extent.width, vl.swap.extent.height, vl.swap.image_format);
+    textures[1] = create_color_attachment(vl.swap.extent.width, vl.swap.extent.height, vl.swap.image_format);
+    TextureObject depth_attachment = create_depth_attachment(vl.swap.extent.width, vl.swap.extent.height);
+    fbo_init(&fbo1, 2);
+	vl_base_pipelines_init();
+
 	return 1;
 }
 
