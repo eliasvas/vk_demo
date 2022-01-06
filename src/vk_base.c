@@ -55,18 +55,18 @@ s32 window_h = 600;
 
 #define MAX_SWAP_IMAGE_COUNT 4
 
-
-
 typedef struct FrameBufferAttachment 
 { 
-	VkImage images[MAX_SWAP_IMAGE_COUNT];
+	VkImage image;
 	//VkExtent2D extent;
-	VkImageView views[MAX_SWAP_IMAGE_COUNT];
-	VkSampler samplers[MAX_SWAP_IMAGE_COUNT]; //who knows? we might need to sample the fbo
-	VkDeviceMemory mems[MAX_SWAP_IMAGE_COUNT];
+	VkImageView view;
+	VkSampler sampler; //who knows? we might need to sample the fbo
+	VkDeviceMemory mem;
 	VkFormat format;
 	u32 image_count;
 }FrameBufferAttachment;
+
+
 
 
 typedef struct Swapchain
@@ -83,11 +83,12 @@ typedef struct Swapchain
 	VkRenderPass rp_begin;
 }Swapchain;
 
+
 #define MAX_ATTACHMENTS_COUNT 4
 typedef struct FrameBufferObject
 {
 	u32 width, height; //should framebuffers be RESIZED when the swapchain resizes??????
-	VkFramebuffer framebuffers[MAX_SWAP_IMAGE_COUNT];
+	VkFramebuffer framebuffer;
 	FrameBufferAttachment depth_attachment;
 	b32 has_depth;
 	FrameBufferAttachment attachments[MAX_ATTACHMENTS_COUNT]; //pos,color,normal?
@@ -358,10 +359,10 @@ void cleanup_fbo_attachment(FrameBufferAttachment *a)
 {
 	for (u32 i = 0; i <a->image_count; ++i)
 	{
-		vkDestroyImage(vl.device, a->images[i], NULL);
-		vkFreeMemory(vl.device, a->mems[i], NULL);
-		vkDestroyImageView(vl.device, a->views[i], NULL);
-		vkDestroySampler(vl.device, a->samplers[i], NULL);
+		vkDestroyImage(vl.device, a->image, NULL);
+		vkFreeMemory(vl.device, a->mem, NULL);
+		vkDestroyImageView(vl.device, a->view, NULL);
+		vkDestroySampler(vl.device, a->sampler, NULL);
 	}
 }
 
@@ -373,8 +374,7 @@ void fbo_cleanup(FrameBufferObject *fbo)
 	for (u32 i = 0; i < attachment_count; ++i)
 		cleanup_fbo_attachment(&fbo->attachments[i]);
 	if (fbo->has_depth)cleanup_fbo_attachment(&fbo->depth_attachment);
-	for (u32 i = 0; i < attachment_count; ++i)
-        vkDestroyFramebuffer(vl.device, fbo->framebuffers[i], NULL);
+    vkDestroyFramebuffer(vl.device, fbo->framebuffer, NULL);
 	vkDestroyRenderPass(vl.device, fbo->clear_renderpass, NULL);
 	vkDestroyRenderPass(vl.device, fbo->render_renderpass, NULL);
 }
@@ -594,7 +594,7 @@ VkRenderingInfoKHR rendering_info_basic(void)
     VkRenderingAttachmentInfoKHR depth_attachment_info = {0};
     depth_attachment_info.sType = VK_STRUCTURE_TYPE_RENDERING_ATTACHMENT_INFO_KHR; 
     depth_attachment_info.pNext = NULL; 
-    depth_attachment_info.imageView = vl.swap.depth_attachment.views[0];
+    depth_attachment_info.imageView = vl.swap.depth_attachment.view;
     
     u32 width, height;
 #ifdef VK_STANDALONE
@@ -1749,7 +1749,7 @@ void vl_swap_create_framebuffers(void)
     vl.swap.framebuffers = (VkFramebuffer*)malloc(sizeof(VkFramebuffer) * vl.swap.image_count); 
     for (u32 i = 0; i < vl.swap.image_count; ++i)
     {
-        VkImageView attachments[] = {vl.swap.image_views[i], vl.swap.depth_attachment.views[0]};
+        VkImageView attachments[] = {vl.swap.image_views[i], vl.swap.depth_attachment.view};
         
         VkFramebufferCreateInfo framebuffer_info = {0};
         framebuffer_info.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
@@ -1761,7 +1761,6 @@ void vl_swap_create_framebuffers(void)
         framebuffer_info.layers = 1;
         
         VK_CHECK(vkCreateFramebuffer(vl.device, &framebuffer_info, NULL, &vl.swap.framebuffers[i]));
-        
     }
     
 }
@@ -1798,7 +1797,7 @@ void vl_create_command_pool(void)
 void render_fullscreen(VkCommandBuffer command_buf, u32 image_index)
 {    
     //VkRenderPassBeginInfo renderpass_info = rp_info(vl.render_pass_basic, vl.swap.framebuffers[vl.image_index], 1);
-    VkRenderPassBeginInfo renderpass_info = rp_info(fbo1.render_renderpass, fbo1.framebuffers[vl.image_index], 2);
+    VkRenderPassBeginInfo renderpass_info = rp_info(fbo1.render_renderpass, fbo1.framebuffer, fbo1.attachment_count);
     vkCmdBeginRenderPass(command_buf, &renderpass_info, VK_SUBPASS_CONTENTS_INLINE);
 
 
@@ -2145,9 +2144,9 @@ FrameBufferAttachment create_depth_attachment(u32 width, u32 height)
 	
 	create_image(width, height, 
 		depth_attachment.format, VK_IMAGE_TILING_OPTIMAL, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT, 
-		VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, &depth_attachment.images[0], &depth_attachment.mems[0]);
+		VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, &depth_attachment.image, &depth_attachment.mem);
 	
-	depth_attachment.views[0] = create_image_view(depth_attachment.images[0], depth_attachment.format, VK_IMAGE_ASPECT_DEPTH_BIT);
+	depth_attachment.view = create_image_view(depth_attachment.image, depth_attachment.format, VK_IMAGE_ASPECT_DEPTH_BIT);
 	//depth_attachment.samplers[0] = create_sampler();
 	return depth_attachment;
 }
@@ -2168,9 +2167,9 @@ FrameBufferAttachment create_color_attachment(u32 width, u32 height, VkFormat fo
 	{
 		create_image(width, height, 
 		color_attachment.format, VK_IMAGE_TILING_OPTIMAL, VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT, 
-		VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, &color_attachment.images[i], &color_attachment.mems[i]);
+		VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, &color_attachment.image, &color_attachment.mem);
 		
-		color_attachment.views[i] = create_image_view(color_attachment.images[i], color_attachment.format, VK_IMAGE_ASPECT_COLOR_BIT);
+		color_attachment.view = create_image_view(color_attachment.image, color_attachment.format, VK_IMAGE_ASPECT_COLOR_BIT);
 		//color_attachment.samplers[i] = create_sampler();
 	}
 	
@@ -2191,13 +2190,15 @@ void fbo_init(FrameBufferObject *fbo, u32 attachment_count)
     fbo->clear_renderpass =create_render_pass(VK_ATTACHMENT_LOAD_OP_CLEAR,VK_IMAGE_LAYOUT_UNDEFINED,VK_IMAGE_LAYOUT_GENERAL, attachment_count, TRUE);
     fbo->render_renderpass =create_render_pass(VK_ATTACHMENT_LOAD_OP_LOAD,VK_IMAGE_LAYOUT_GENERAL,VK_IMAGE_LAYOUT_GENERAL, attachment_count, TRUE);
 	//now create the  framebuffers
-	for (u32 i=0;i <vl.swap.image_count; ++i)
+    
+    //CHECK CHECK CHECK
+	//for (u32 i=0;i <vl.swap.image_count; ++i)
 	{
 		VkImageView *attachments = NULL;
 		
 		for (u32 j = 0; j < fbo->attachment_count; ++j)
-			buf_push(attachments, fbo->attachments[j].views[i]);
-		buf_push(attachments, fbo->depth_attachment.views[0]);
+			buf_push(attachments, fbo->attachments[j].view);
+		buf_push(attachments, fbo->depth_attachment.view);
 		
 		
 		VkFramebufferCreateInfo fbo_info = {0};
@@ -2209,7 +2210,7 @@ void fbo_init(FrameBufferObject *fbo, u32 attachment_count)
 		fbo_info.height = vl.swap.extent.height;
 		fbo_info.layers = 1;
 		
-		VK_CHECK(vkCreateFramebuffer(vl.device, &fbo_info, NULL, &fbo->framebuffers[i]));
+		VK_CHECK(vkCreateFramebuffer(vl.device, &fbo_info, NULL, &fbo->framebuffer));
 		
 		buf_free(attachments);
 	}
@@ -2832,7 +2833,7 @@ void frame_start(void)
 	vkCmdEndRenderPass(vl.command_buffers[vl.image_index]);
     //*/
 
-    renderpass_info = rp_info(fbo1.clear_renderpass, fbo1.framebuffers[vl.image_index], fbo1.attachment_count);
+    renderpass_info = rp_info(fbo1.clear_renderpass, fbo1.framebuffer, fbo1.attachment_count);
     vkCmdBeginRenderPass(vl.command_buffers[vl.image_index], &renderpass_info, VK_SUBPASS_CONTENTS_INLINE);
 	vkCmdEndRenderPass(vl.command_buffers[vl.image_index]);
  
