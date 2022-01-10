@@ -19,5 +19,5 @@ void main()
 
 	FragColor = g_vVSColor;
 	FragColor = texture(tex_sampler, g_vVSUV) * textured * g_vVSColor + g_vVSColor * (1.0 - textured);
-	if (texture(tex_sampler, g_vVSUV).a < 0.1)discard;
+	if (texture(tex_sampler, g_vVSUV).a < 0.01)discard;
 }
