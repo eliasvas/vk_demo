@@ -3,21 +3,23 @@
 #include "stdlib.h"
 #include "string.h"
 
-#define VK_STANDALONE
+#define VK_STANDALONE 1
 #ifdef VK_STANDALONE
-#define NOGLFW 1
-#include "vkwin.h"
-Window wnd;
+    #define NOGLFW 1
+    #include "vkwin.h"
+    Window wnd;
 #else
-extern int vk_getWidth();
-extern int vk_getHeight();
-extern HWND vk_getWindowSystemHandle();
-extern HINSTANCE vk_getWindowSystemInstance();
-void vk_error(char* text)
-{
-    printf("%s\n", text);
-}
-#include "vk_base.h"
+    extern int vk_getWidth();
+    extern int vk_getHeight();
+    extern HWND vk_getWindowSystemHandle();
+    extern HINSTANCE vk_getWindowSystemInstance();
+    void vk_error(char* text)
+    {
+        printf("%s\n", text);
+    }
+    #include "vk_base.h"
+    #define VOLK_IMPLEMENTATION
+    #include "vulkan/volk.h"
 #endif
 
 
@@ -139,6 +141,7 @@ typedef struct UniformVariable
 {
     char name[64];
     u32 size;
+    u32 array_count;
     u32 padded_size;
     u32 offset;
     u32 type_flags;
@@ -273,6 +276,12 @@ typedef struct VulkanLayer
 
 }VulkanLayer;
 
+typedef struct MultiAllocBuffer
+{
+    DataBuffer gpu_side_buffer;
+    void* global_buffer;
+    u32 current_offset;
+}MultiAllocBuffer;
 
 VulkanLayer vl;
 #else 
@@ -299,6 +308,10 @@ u32 get_format_size(VkFormat format)
 
 
 
+
+
+
+
 u32 calc_vertex_input_total_size(ShaderMetaInfo* info)
 {
     u32 s = 0;
@@ -306,7 +319,6 @@ u32 calc_vertex_input_total_size(ShaderMetaInfo* info)
         s += info->vertex_input_attributes[i].size;
     return s;
 }
-
 VkVertexInputBindingDescription get_bind_desc(ShaderMetaInfo *info)
 {
     VkVertexInputBindingDescription bind_desc = {0};
@@ -335,9 +347,7 @@ u32 get_attr_desc(VkVertexInputAttributeDescription *attr_desc, ShaderMetaInfo *
                 valid_attribs++;
                 break;
             }
-   
         }
-
     }
     //attr_desc[2].offset = offsetof(Vertex, tex_coord);
     return valid_attribs;
@@ -346,6 +356,8 @@ u32 get_attr_desc(VkVertexInputAttributeDescription *attr_desc, ShaderMetaInfo *
 
 void texture_cleanup(TextureObject *t)
 {
+    vkDeviceWaitIdle(vl.device);
+    vkQueueWaitIdle(vl.graphics_queue);
     vkDestroySampler(vl.device, t->sampler, NULL);
     vkDestroyImageView(vl.device, t->view, NULL);
     vkDestroyImage(vl.device, t->image, NULL);
@@ -411,6 +423,48 @@ void buf_destroy(DataBuffer *buf)
 	}
     buf->active = FALSE;
 }
+
+
+
+
+
+MultiAllocBuffer global_vertex_buffer;
+MultiAllocBuffer global_index_buffer;
+
+void create_buffer(VkBufferUsageFlagBits usage, VkMemoryPropertyFlagBits mem_flags, DataBuffer *buf, VkDeviceSize size, void *data);
+
+b32 multi_alloc_buffer_init(MultiAllocBuffer* buf, u32 buffer_total_size, VkBufferUsageFlagBits usage)
+{
+    //buf->global_buffer = malloc(buffer_total_size);
+    //assert(buf->global_buffer);
+    //if (!buf->global_buffer)return FALSE;
+    buf->current_offset = 0;
+    create_buffer(usage,
+        (VkMemoryPropertyFlagBits)(VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT),
+        &buf->gpu_side_buffer, buffer_total_size, NULL);
+
+    return TRUE;
+}
+
+void multi_alloc_buffer_clear(MultiAllocBuffer* buf)
+{
+    buf->current_offset = 0;
+    //printf("BUFFER CLEAR\n\n\n\n\n\n\n\n\n\n");
+}
+//returns the offset where the data start
+u32 multi_alloc_buffer_insert(MultiAllocBuffer* buf, void* src_data, u32 data_size)
+{
+    u32 mem_offset = buf->current_offset;
+    ///*
+    VK_CHECK(buf_map(&buf->gpu_side_buffer, data_size, buf->current_offset));
+    memcpy(buf->gpu_side_buffer.mapped, src_data, data_size);
+    buf_unmap(&buf->gpu_side_buffer);
+    //*/
+    //memcpy(buf->global_buffer, src_data, data_size);
+    buf->current_offset += data_size;
+    return mem_offset;
+}
+
 
 
 typedef struct PipelineBuilder
@@ -553,6 +607,19 @@ VkViewport viewport_basic(void)
     return viewport;
 }
 
+VkViewport viewport(f32 x, f32 y, f32 width, f32 height)
+{
+    VkViewport viewport = { 0 };
+    viewport.x = x;
+    viewport.y = y;
+    viewport.width = width;
+    viewport.height = height;
+    //viewport.height *= fabs(sin(get_time()));
+    viewport.minDepth = 0.0f;
+    viewport.maxDepth = 1.0f;
+    return viewport;
+}
+
 VkRect2D scissor_basic(void)
 {
     VkRect2D scissor = {0};
@@ -600,7 +667,7 @@ VkRenderingInfoKHR rendering_info_basic(void)
     return rendering_info; //this is not safe, pointer to stack allocated variables!
 }
 
-VkPipeline build_pipeline(VkDevice device, PipelineBuilder p,VkRenderPass render_pass, u32 out_attachment_count)
+VkPipeline build_pipeline(VkDevice device, PipelineBuilder p,VkRenderPass render_pass, u32 out_attachment_count, b32 depth_enable)
 {
 	//------these are not used because they are dynamic rn!-------
     VkViewport viewport = viewport_basic();
@@ -609,11 +676,10 @@ VkPipeline build_pipeline(VkDevice device, PipelineBuilder p,VkRenderPass render
 	
 	VkPipelineDepthStencilStateCreateInfo depth_stencil = {0};
 	depth_stencil.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
-#ifdef VK_STANDALONE
-	depth_stencil.depthTestEnable = VK_TRUE;
-#else
-    depth_stencil.depthTestEnable = VK_FALSE;
-#endif
+    if (depth_enable)
+        depth_stencil.depthTestEnable = VK_TRUE;
+    else
+        depth_stencil.depthTestEnable = VK_FALSE;
 	depth_stencil.depthWriteEnable = VK_TRUE;
 	depth_stencil.depthCompareOp = VK_COMPARE_OP_LESS_OR_EQUAL;
 	depth_stencil.depthBoundsTestEnable = VK_FALSE;
@@ -654,7 +720,7 @@ VkPipeline build_pipeline(VkDevice device, PipelineBuilder p,VkRenderPass render
 	
 
     VkDynamicState dynamic_state_enables[] =
-    { VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR};
+    { VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR, VK_DYNAMIC_STATE_PRIMITIVE_TOPOLOGY_EXT };
     VkPipelineDynamicStateCreateInfo dynamic_state = { 0 };
     dynamic_state.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
     dynamic_state.pNext = NULL;
@@ -813,8 +879,10 @@ void shader_reflect(u32 *shader_code, u32 code_size, ShaderMetaInfo *info)
         attr->format = (VkFormat)curvar->format;
         attr->builtin = curvar->built_in;
 
-        if (curvar->array.dims_count > 0)attr->array_count = curvar->array.dims[0];
-        else attr->array_count = 1;
+        if (curvar->array.dims_count > 0)
+            attr->array_count = curvar->array.dims[0];
+        else 
+            attr->array_count = 1;
 
         attr->size = get_format_size(attr->format) * attr->array_count; //@THIS IS TEMPORARY (DELETE THIS)
 
@@ -881,10 +949,11 @@ void shader_reflect(u32 *shader_code, u32 code_size, ShaderMetaInfo *info)
                 const char *name = uniform_struct_desc->members[i].struct_member_name;
                 sprintf(desc_binding->members[i].name, name);
 
-                u32 type_flags = uniform_struct_desc->members[i].type_flags;
+                SpvReflectTypeFlags type_flags = uniform_struct_desc->members[i].type_flags;
                 desc_binding->members[i].type_flags = type_flags;
                 SpvReflectNumericTraits numeric = uniform_struct_desc->members[i].traits.numeric;
                 u32 component_count = numeric.vector.component_count;
+                desc_binding->members[i].array_count = uniform_struct_desc->members[i].traits.array.dims[0];
                 //printf("VARIABLE %s.%s of type %i with %i components \n", desc_binding->name, name, type_flags, component_count);
             }
 
@@ -901,6 +970,7 @@ void shader_reflect(u32 *shader_code, u32 code_size, ShaderMetaInfo *info)
                 SpvReflectBlockVariable cur_var = uniform_struct.members[i];
                 const char *name = cur_var.name;
                 desc_binding->members[i].size = cur_var.size;
+                
                 desc_binding->members[i].padded_size = cur_var.padded_size;
                 desc_binding->members[i].offset = cur_var.offset;
                 u32 absolute_offset = cur_var.absolute_offset;
@@ -918,8 +988,14 @@ void shader_reflect(u32 *shader_code, u32 code_size, ShaderMetaInfo *info)
 
 //@BEWARE(inv): runtime shader compilation should generally be avoided as it is too slow to call the command line!
 //one other option would be to use glslang BUT its a big dependency and I don't really need it.
-#define SHADER_DST_DIR "shaders/"
+
+#ifdef VK_STANDALONE
 #define SHADER_SRC_DIR "../assets/shaders/"
+#define SHADER_DST_DIR "shaders/"
+#else
+#define SHADER_SRC_DIR "../resources/generic/shaders/default/"
+#define SHADER_DST_DIR "../resources/generic/shaders/default/"
+#endif
 void shader_create_dynamic(VkDevice device, ShaderObject *shader, const char *filename, VkShaderStageFlagBits stage)
 {
     char command[256];
@@ -1003,7 +1079,7 @@ const u32 enable_validation_layers= TRUE;
 const u32 enable_validation_layers = TRUE;
 #endif
 
-const char* device_extensions[] = { VK_KHR_SWAPCHAIN_EXTENSION_NAME};//, VK_KHR_DYNAMIC_RENDERING_EXTENSION_NAME };
+const char* device_extensions[] = { VK_KHR_SWAPCHAIN_EXTENSION_NAME, "VK_EXT_extended_dynamic_state"};//, VK_KHR_DYNAMIC_RENDERING_EXTENSION_NAME };
 
 
 typedef struct UniformBufferObject
@@ -1181,7 +1257,7 @@ void vl_create_instance(void) {
 
     
 	VK_CHECK(vkCreateInstance(&create_info, NULL, &vl.instance));
-	
+    volkLoadInstance(vl.instance);
     
 	//(OPTIONAL): extension support
 	u32 ext_count = 0;
@@ -1429,7 +1505,8 @@ void vl_create_swapchain(void)
     vl.swap.image_format = surface_format.format;
     vl.swap.extent = extent;
     vl.swap.image_count = image_count;//TODO(ilias): check
-    //printf("new swapchain size: %i\n", image_count);
+    printf("new swapchain image_count: %i\n", image_count);
+    printf("new swapchain image_dims: %i %i\n", vl.swap.extent.width, vl.swap.extent.height);
 	vl.swap.depth_attachment = create_depth_attachment(vl.swap.extent.width, vl.swap.extent.height);
 	
 	vl.swap.rp_begin = create_render_pass(VK_ATTACHMENT_LOAD_OP_CLEAR,VK_IMAGE_LAYOUT_UNDEFINED,VK_IMAGE_LAYOUT_GENERAL, 1, TRUE);
@@ -1498,7 +1575,12 @@ void vl_create_logical_device(void)
     }
     else
         create_info.enabledLayerCount = 0;
-    
+    VkPhysicalDeviceExtendedDynamicStateFeaturesEXT extended_dynamic_state = { 0 };
+    extended_dynamic_state.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTENDED_DYNAMIC_STATE_FEATURES_EXT;
+    extended_dynamic_state.pNext = NULL;
+    extended_dynamic_state.extendedDynamicState = VK_TRUE;
+
+    create_info.pNext = &extended_dynamic_state;
     VK_CHECK(vkCreateDevice(vl.physical_device, &create_info, NULL, &vl.device));
     
     
@@ -1634,7 +1716,7 @@ VkRenderPassBeginInfo rp_info(VkRenderPass rp, VkFramebuffer fbo, u32 attachment
     rp_info.renderArea.extent = extent;
 #ifdef __cplusplus
     for (u32 i = 0; i < attachment_count; ++i)
-        clear_values[i].color = {{0.0f, 0.0f, 0.0f, 1.0f}};
+        clear_values[i].color = {{0.0f, 1.0f, 0.0f, 1.0f}};
 	clear_values[attachment_count].depthStencil = {1.0f, 0};
 #else
 	for (u32 i = 0; i < attachment_count; ++i) clear_values[i].color = (VkClearColorValue){{0.0f, 0.0f, 0.0f, 1.0f}};
@@ -1674,7 +1756,7 @@ VkRenderPass create_render_pass(VkAttachmentLoadOp load_op,VkImageLayout initial
 	{
 		VkAttachmentReference color_attachment_ref = {0};
 		color_attachment_ref.attachment = i;
-		color_attachment_ref.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+		color_attachment_ref.layout = VK_IMAGE_LAYOUT_GENERAL;
 		buf_push(attachment_refs, color_attachment_ref);
 	}
 	
@@ -1690,7 +1772,7 @@ VkRenderPass create_render_pass(VkAttachmentLoadOp load_op,VkImageLayout initial
     
 	VkAttachmentReference depth_attachment_ref = {0};
     depth_attachment_ref.attachment = color_attachment_count; //for 1 attachment its in 1, for 2 in 2([0,1,2]) and so on..
-    depth_attachment_ref.layout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+    depth_attachment_ref.layout = VK_IMAGE_LAYOUT_GENERAL;
     
     VkSubpassDescription subpass = {0};
     subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
@@ -1714,7 +1796,7 @@ VkRenderPass create_render_pass(VkAttachmentLoadOp load_op,VkImageLayout initial
     render_pass_info.subpassCount = 1;
     render_pass_info.pSubpasses = &subpass;
     
-    /*
+    ///*
     VkSubpassDependency dependency = {0};
     dependency.srcSubpass = VK_SUBPASS_EXTERNAL;
     dependency.dstSubpass = 0;
@@ -1724,7 +1806,7 @@ VkRenderPass create_render_pass(VkAttachmentLoadOp load_op,VkImageLayout initial
     dependency.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
     render_pass_info.dependencyCount = 1;
     render_pass_info.pDependencies = &dependency;
-    */
+    //*/
     VK_CHECK(vkCreateRenderPass(vl.device, &render_pass_info, NULL, &render_pass));
 	
 	buf_free(attachment_refs);
@@ -1786,13 +1868,15 @@ void vl_create_command_pool(void)
 
 void render_fullscreen(VkCommandBuffer command_buf, u32 image_index)
 {    
+return;
     //VkRenderPassBeginInfo renderpass_info = rp_info(vl.render_pass_basic, vl.swap.framebuffers[vl.image_index], 1);
     VkRenderPassBeginInfo renderpass_info = rp_info(fbo1.render_renderpass, fbo1.framebuffer, fbo1.attachment_count, vl.swap.extent);
     vkCmdBeginRenderPass(command_buf, &renderpass_info, VK_SUBPASS_CONTENTS_INLINE);
 
 
 	vkCmdBindPipeline(command_buf, VK_PIPELINE_BIND_POINT_GRAPHICS, vl.fullscreen_pipe.pipeline);
-	
+    //vkCmdSetPrimitiveTopologyEXT(command_buf, VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST);
+
     vkCmdDraw(command_buf, 4, 1, 0, 0);
 	vkCmdEndRenderPass(command_buf);
 }
@@ -2219,7 +2303,7 @@ TextureObject create_depth_attachment(u32 width, u32 height)
     depth_attachment.height = height;
     create_texture_sampler(&depth_attachment.sampler);
     
-    //depth_attachment.samplers[0] = create_sampler();
+    create_texture_sampler(&depth_attachment.sampler);
 	return depth_attachment;
 }
 
@@ -2376,7 +2460,7 @@ void pipeline_build_basic_no_reflect(PipelineObject *p,const char *vert, const c
     VkPipelineLayoutCreateInfo info = pipe_layout_create_info(&layout, 1);
 	VK_CHECK(vkCreatePipelineLayout(vl.device, &info, NULL, &pb.pipeline_layout));
 	VK_CHECK(vkCreatePipelineLayout(vl.device, &info, NULL, &p->pipeline_layout));
-	p->pipeline = build_pipeline(vl.device, pb, fbo1.clear_renderpass, p->frag_shader.info.out_var_count);
+	p->pipeline = build_pipeline(vl.device, pb, fbo1.clear_renderpass, p->frag_shader.info.out_var_count, FALSE);
 }
 
 
@@ -2416,7 +2500,7 @@ void pipeline_build_basic(PipelineObject *p,const char *vert, const char *frag, 
 	VK_CHECK(vkCreatePipelineLayout(vl.device, &info, NULL, &p->pipeline_layout));
     VkRenderPass rp = 
         create_render_pass(VK_ATTACHMENT_LOAD_OP_LOAD,VK_IMAGE_LAYOUT_GENERAL,VK_IMAGE_LAYOUT_GENERAL,p->frag_shader.info.out_var_count, TRUE);
-	p->pipeline = build_pipeline(vl.device, pb, rp, p->frag_shader.info.out_var_count);
+	p->pipeline = build_pipeline(vl.device, pb, rp, p->frag_shader.info.out_var_count, FALSE);
 
 
     for (u32 i = 0;i < vl.swap.image_count; ++i)
@@ -2424,6 +2508,49 @@ void pipeline_build_basic(PipelineObject *p,const char *vert, const char *frag, 
 	vkDestroyDescriptorSetLayout(vl.device, layout, NULL);
 }
 
+void pipeline_build_compiled_shaders(PipelineObject* p, ShaderObject vert, ShaderObject frag, VkPrimitiveTopology topology, b32 depth_enabled)
+{
+
+    VkVertexInputBindingDescription bind_desc;
+    VkVertexInputAttributeDescription attr_desc[32];
+
+#ifdef __cplusplus
+    PipelineBuilder pb = {};
+#else
+    PipelineBuilder pb = { 0 };
+#endif
+    p->vert_shader = vert;
+    p->frag_shader = frag;
+
+    pb.shader_stages_count = 2;
+    pb.shader_stages[0] = pipe_shader_stage_create_info(p->vert_shader.stage, p->vert_shader.module);
+    pb.shader_stages[1] = pipe_shader_stage_create_info(p->frag_shader.stage, p->frag_shader.module);
+
+    //make shader input attributes to a valid vertex input info for the pipeline (+misc pipeline stuff)
+    pb.vertex_input_info = pipe_vertex_input_state_create_info(&p->vert_shader, &bind_desc, attr_desc);
+    pb.input_asm = pipe_input_assembly_create_info((VkPrimitiveTopology)topology);
+    pb.rasterizer = pipe_rasterization_state_create_info(VK_POLYGON_MODE_FILL);
+    pb.multisampling = pipe_multisampling_state_create_info();
+    pb.color_blend_attachments[0] = pipe_color_blend_attachment_state();
+    pb.color_blend_attachments[1] = pipe_color_blend_attachment_state();
+    pb.color_blend_attachments[2] = pipe_color_blend_attachment_state();
+    pb.color_blend_attachments[3] = pipe_color_blend_attachment_state();
+
+    //make shader uniform variables to a descriptor set layout and configure the pipeline layout
+    //(since we don't use push constants, a descriptor set layout is all that's needed)
+    VkDescriptorSetLayout layout = shader_create_descriptor_set_layout(&p->vert_shader, &p->frag_shader, 1);
+    VkPipelineLayoutCreateInfo info = pipe_layout_create_info(&layout, 1);
+    VK_CHECK(vkCreatePipelineLayout(vl.device, &info, NULL, &pb.pipeline_layout));
+    VK_CHECK(vkCreatePipelineLayout(vl.device, &info, NULL, &p->pipeline_layout));
+    VkRenderPass rp =
+        create_render_pass(VK_ATTACHMENT_LOAD_OP_LOAD, VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_GENERAL, p->frag_shader.info.out_var_count, TRUE);
+    p->pipeline = build_pipeline(vl.device, pb, rp, p->frag_shader.info.out_var_count, depth_enabled);
+
+
+    for (u32 i = 0; i < vl.swap.image_count; ++i)
+        create_descriptor_pool(&p->descriptor_pools[i], &p->vert_shader, &p->frag_shader);
+    vkDestroyDescriptorSetLayout(vl.device, layout, NULL);
+}
 //releases ALL pipeline resources
 void pipeline_cleanup(PipelineObject *pipe)
 {
@@ -2443,8 +2570,11 @@ void vl_base_pipelines_init(void)
 #ifdef VK_STANDALONE
     pipeline_build_basic_no_reflect(&vl.fullscreen_pipe, "fullscreen.vert", "fullscreen.frag", VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST);
     pipeline_build_basic(&vl.base_pipe, "base.vert", "base.frag", VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST);
-#endif
+#else
     pipeline_build_basic(&vl.def_pipe, "def.vert", "def.frag", VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST);
+    //why the base pipe though... windows!!!!!!!!!!!!!
+    pipeline_build_basic(&vl.base_pipe, "def_vcolor.vert", "def.frag", VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST);
+#endif
 }
 
 typedef struct UniformBufferManager
@@ -2452,7 +2582,7 @@ typedef struct UniformBufferManager
     DataBuffer **uniform_buffers;
     u32 *indices;
     //needed because we can free only uniform buffers NOT currently in use, meaning of the same swapchain image
-    u32 swap_image_count; 
+    u32 swap_image_count;
     u32 buffers_per_swap_image;
 }UniformBufferManager;
 UniformBufferManager ubo_manager;
@@ -2506,7 +2636,8 @@ void render_cube_immediate(VkCommandBuffer command_buf, u32 image_index, Pipelin
 
 
 	vkCmdBindPipeline(command_buf, VK_PIPELINE_BIND_POINT_GRAPHICS, p->pipeline);
-	
+    vkCmdSetPrimitiveTopologyEXT(command_buf,VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST);
+
     VkBuffer vertex_buffers[] = {vertex_buffer_real.buffer};
     VkDeviceSize offsets[] = {0};
     vkCmdBindVertexBuffers(command_buf, 0, 1, vertex_buffers, offsets);
@@ -2545,23 +2676,27 @@ void render_cube_immediate(VkCommandBuffer command_buf, u32 image_index, Pipelin
     vkCmdEndRenderPass(vl.command_buffers[vl.image_index]);
 }
 
-void render_def_vbo(VkCommandBuffer command_buf, u32 image_index, float *mvp, vec4 color, DataBuffer *vbo, DataBuffer *ibo,u32 vertex_offset, u32 index_offset, TextureObject *tex, f32 ww, f32 wh, u32 vbo_updated)
+VkRenderPass* current_renderpass = NULL;
+void render_def_vbo(float *mvp, vec4 color, DataBuffer *vbo, DataBuffer *ibo,u32 vertex_offset, u32 index_offset, TextureObject *tex,u32 vbo_updated, b32 color_enabled, VkPrimitiveTopology topology, int* v, u32 index_count)
 {
+    VkCommandBuffer command_buf = vl.command_buffers[vl.image_index];
     VkRenderPassBeginInfo rp_inf = rp_info(vl.render_pass_basic, vl.swap.framebuffers[vl.image_index], 1, vl.swap.extent);
     vkCmdBeginRenderPass(vl.command_buffers[vl.image_index], &rp_inf, VK_SUBPASS_CONTENTS_INLINE);
-
+    
 
     PipelineObject* p = &vl.def_pipe;
+    if (color_enabled)p = &vl.base_pipe;
     VkDescriptorSetLayout layout = shader_create_descriptor_set_layout(&p->vert_shader, &p->frag_shader, 1);
     DataBuffer* uniform_buffer = create_uniform_buffers(&p->vert_shader.info, 1);
     TextureObject textures[] = { sample_texture, sample_texture2 };
     VkDescriptorSet* desc_set;
     if (tex)
-        desc_set = create_descriptor_sets(layout, &p->vert_shader, &p->frag_shader, p->descriptor_pools[image_index], uniform_buffer, tex, 1, 1);
+        desc_set = create_descriptor_sets(layout, &p->vert_shader, &p->frag_shader, p->descriptor_pools[vl.image_index], uniform_buffer, tex, 1, 1);
     else
-        desc_set = create_descriptor_sets(layout, &p->vert_shader, &p->frag_shader, p->descriptor_pools[image_index], uniform_buffer, textures, 1, 1);
+        desc_set = create_descriptor_sets(layout, &p->vert_shader, &p->frag_shader, p->descriptor_pools[vl.image_index], uniform_buffer, textures, 1, 1);
 
-    DataBuffer* buf = ubo_manager_get_next_buf(image_index);
+    //transfers ownership of UBO to manager :P its rly ugly tho FIX
+    DataBuffer* buf = ubo_manager_get_next_buf(vl.image_index);
     if (buf == NULL)return;
     *buf = *uniform_buffer;
     uniform_buffer = buf;
@@ -2571,13 +2706,37 @@ void render_def_vbo(VkCommandBuffer command_buf, u32 image_index, float *mvp, ve
 
     vkCmdBindPipeline(command_buf, VK_PIPELINE_BIND_POINT_GRAPHICS, p->pipeline);
 
-    VkBuffer vertex_buffers[] = { vbo->buffer };
-    VkDeviceSize offsets[] = { vertex_offset };
-    vkCmdBindVertexBuffers(command_buf, 0, 1, vertex_buffers, offsets);
-    vkCmdBindIndexBuffer(command_buf, ibo->buffer, index_offset, VK_INDEX_TYPE_UINT32);
+    vkCmdSetPrimitiveTopologyEXT(command_buf, topology);
 
-    VkViewport viewport = viewport_basic();
-    vkCmdSetViewport(command_buf,0,1,&viewport);
+    if (vbo->active && ibo->active) //this means that we have static geometry
+    {
+        /*
+        VkBuffer vertex_buffers[] = { global_vertex_buffer.gpu_side_buffer.buffer };
+        VkDeviceSize offsets[] = { vertex_offset };
+        vkCmdBindVertexBuffers(command_buf, 0, 1, vertex_buffers, offsets);
+        vkCmdBindIndexBuffer(command_buf, global_index_buffer.gpu_side_buffer.buffer, index_offset, VK_INDEX_TYPE_UINT32);
+        */
+
+        VkBuffer vertex_buffers[] = { vbo->buffer };
+        VkDeviceSize offsets[] = { vertex_offset };
+        vkCmdBindVertexBuffers(command_buf, 0, 1, vertex_buffers, offsets);
+        vkCmdBindIndexBuffer(command_buf, ibo->buffer, index_offset, VK_INDEX_TYPE_UINT32);
+        index_count = ibo->size / sizeof(u32);
+    }
+    else //dynamic!
+    {
+        VkBuffer vertex_buffers[] = { global_vertex_buffer.gpu_side_buffer.buffer };
+        VkDeviceSize offsets[] = { vertex_offset };
+        vkCmdBindVertexBuffers(command_buf, 0, 1, vertex_buffers, offsets);
+        vkCmdBindIndexBuffer(command_buf, global_index_buffer.gpu_side_buffer.buffer, index_offset, VK_INDEX_TYPE_UINT32);
+    }
+
+
+
+    
+
+    VkViewport viewp = viewport(v[0], v[1], v[2], v[3]);
+    vkCmdSetViewport(command_buf,0,1,&viewp);
 
     VkRect2D scissor = scissor_basic();
     vkCmdSetScissor(command_buf, 0, 1, &scissor);
@@ -2586,8 +2745,6 @@ void render_def_vbo(VkCommandBuffer command_buf, u32 image_index, float *mvp, ve
 
     shader_set_immediate(&p->vert_shader.info, "WorldViewProj", mvp, data);
     shader_set_immediate(&p->vert_shader.info, "constColor", &color, data);
-    shader_set_immediate(&p->vert_shader.info, "ww", &ww, data);
-    shader_set_immediate(&p->vert_shader.info, "wh", &wh, data);
     //whether the primitive is textured or not
     f32 textured;
     if (tex == NULL)
@@ -2602,15 +2759,14 @@ void render_def_vbo(VkCommandBuffer command_buf, u32 image_index, float *mvp, ve
     buf_unmap(uniform_buffer);
 
 
-    vkCmdBindDescriptorSets(vl.command_buffers[image_index], VK_PIPELINE_BIND_POINT_GRAPHICS,
+    vkCmdBindDescriptorSets(command_buf, VK_PIPELINE_BIND_POINT_GRAPHICS,
         p->pipeline_layout, 0, 1, desc_set, 0, NULL);
 
-    vkCmdDrawIndexed(command_buf, ibo->size / sizeof(u32), 1, 0,0, 0);
+    vkCmdDrawIndexed(command_buf, index_count, 1, 0,0, 0);
 
-    vkCmdEndRenderPass(vl.command_buffers[vl.image_index]);
+    vkCmdEndRenderPass(command_buf);
 
-    
-    if (vbo_updated)
+    if (vbo_updated && 0)
     {
         ///*
         //---------------STALL-------------------
@@ -2634,7 +2790,44 @@ void render_def_vbo(VkCommandBuffer command_buf, u32 image_index, float *mvp, ve
     }
 }
 
+void render_effect_vbo(PipelineObject *pipe, DataBuffer *ubo, DataBuffer* vbo, DataBuffer* ibo, TextureObject* tex, VkViewport v, VkRect2D s)
+{
+    PipelineObject* p = pipe;
+    VkDescriptorSetLayout layout = shader_create_descriptor_set_layout(&p->vert_shader, &p->frag_shader, 1);
+    TextureObject textures[] = { sample_texture, sample_texture2 };
+    VkDescriptorSet* desc_set;//                                                                VV MAKE THIS THE PIPELINE POOL!!!
+    desc_set = create_descriptor_sets(layout, &p->vert_shader, &p->frag_shader, vl.def_pipe.descriptor_pools[vl.image_index], ubo, textures, 1, 1);
+    VkCommandBuffer command_buf = vl.command_buffers[vl.image_index];
 
+    vkDestroyDescriptorSetLayout(vl.device, layout, NULL);
+
+
+    vkCmdBindPipeline(command_buf, VK_PIPELINE_BIND_POINT_GRAPHICS, p->pipeline);
+    vkCmdSetPrimitiveTopologyEXT(command_buf, VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST);
+
+    VkBuffer vertex_buffers[] = { vbo->buffer };
+    VkDeviceSize offsets[] = { 0 };
+    vkCmdBindVertexBuffers(command_buf, 0, 1, vertex_buffers, offsets);
+    vkCmdBindIndexBuffer(command_buf, ibo->buffer, 0, VK_INDEX_TYPE_UINT32);
+
+    //VkViewport viewport = viewport_basic();
+    vkCmdSetViewport(command_buf, 0, 1, &v);
+
+    //VkRect2D scissor = scissor_basic();
+    vkCmdSetScissor(command_buf, 0, 1, &s);
+
+    void* data = malloc(p->vert_shader.info.descriptor_bindings[0].mem_size);
+
+    
+    f32 textured = 0.0f;
+    
+    vkCmdBindDescriptorSets(command_buf, VK_PIPELINE_BIND_POINT_GRAPHICS,
+        p->pipeline_layout, 0, 1, desc_set, 0, NULL);
+
+    vkCmdDrawIndexed(command_buf, ibo->size / sizeof(u32), 1, 0, 0, 0);
+    
+    
+}
 
 void create_sync_objects(void)
 {
@@ -2688,22 +2881,24 @@ void vl_cleanup_swapchain(void)
 
 void vl_recreate_swapchain(void)
 {
+    vkDeviceWaitIdle(vl.device);
     //in case of window minimization (w = 0, h = 0) we wait until we get a proper window again
     u32 width = 0, height = 0;
 #ifdef VK_STANDALONE
 	window_get_framebuffer_size(&wnd, &width, &height);
 #else
+    
     width = vk_getWidth();
     height = vk_getHeight();
 #endif
     
-    vkDeviceWaitIdle(vl.device);
+    
     
     vl_cleanup_swapchain();
     vl_create_swapchain();
     vl_create_swapchain_image_views();
 	vl.render_pass_basic = create_render_pass(VK_ATTACHMENT_LOAD_OP_LOAD,VK_IMAGE_LAYOUT_GENERAL,VK_IMAGE_LAYOUT_GENERAL, 1, TRUE);
-	vl.swap.rp_begin = create_render_pass(VK_ATTACHMENT_LOAD_OP_CLEAR,VK_IMAGE_LAYOUT_UNDEFINED,VK_IMAGE_LAYOUT_GENERAL, 1, TRUE);
+	//vl.swap.rp_begin = create_render_pass(VK_ATTACHMENT_LOAD_OP_CLEAR,VK_IMAGE_LAYOUT_UNDEFINED,VK_IMAGE_LAYOUT_GENERAL, 1, TRUE);
     
     
 	vl_base_pipelines_init();
@@ -2787,10 +2982,10 @@ TextureObject create_texture_image(char *filename, VkFormat format)
 
 TextureObject create_texture_image_wdata(u8* pixels,u32 tex_w, u32 tex_h,u32 component_count, VkFormat format)
 {
+    vkDeviceWaitIdle(vl.device);
     TextureObject tex;
    
     VkDeviceSize image_size = tex_w * tex_h * component_count;
-
 
     //[2]: we create a buffer to hold the pixel information (we also fill it)
     DataBuffer idb;
@@ -2829,7 +3024,7 @@ TextureObject create_texture_image_wdata(u8* pixels,u32 tex_w, u32 tex_h,u32 com
 void vulkan_layer_init(void)
 {
 #ifdef __cplusplus
-	vl = {};
+    vl = {}; //current image index to draw
 #else
 	vl = (VulkanLayer){0};
 #endif
@@ -2848,6 +3043,7 @@ void vulkan_layer_init(void)
 }
 
 int vulkan_init(void) {
+    volkInitialize();
 	vulkan_layer_init();
     //vkCmdBeginRenderingKHR = (vkGetInstanceProcAddr(vl.instance, "vkCmdBeginRenderingKHR"));
     //vkCmdEndRenderingKHR = (PFN_vkCmdEndRenderingKHR)vkGetInstanceProcAddr(vl.instance, "vkCmdEndRenderingKHR");
@@ -2862,7 +3058,7 @@ int vulkan_init(void) {
     sample_texture2 = create_texture_image("../resources/generic/textures/checkerboard.png", VK_FORMAT_R8G8B8A8_UNORM);
 #endif
 
-    ubo_manager_init(1000);
+    ubo_manager_init(500);
 	
 
 	
@@ -2915,8 +3111,11 @@ void frame_start(void)
     ubo_manager_reset(vl.image_index);
 #ifdef VK_STANDALONE
     vkResetDescriptorPool(vl.device, vl.base_pipe.descriptor_pools[vl.image_index], NULL);
-#endif
+#else
     vkResetDescriptorPool(vl.device, vl.def_pipe.descriptor_pools[vl.image_index], NULL);
+    vkResetDescriptorPool(vl.device, vl.base_pipe.descriptor_pools[vl.image_index], NULL);
+#endif
+
     VK_CHECK(vkResetCommandBuffer(vl.command_buffers[vl.image_index], VK_COMMAND_BUFFER_RESET_RELEASE_RESOURCES_BIT));
         
 		
@@ -2945,10 +3144,12 @@ void frame_start(void)
 	vkCmdEndRenderPass(vl.command_buffers[vl.image_index]);
     //*/
 
+
+/*
     renderpass_info = rp_info(fbo1.clear_renderpass, fbo1.framebuffer, fbo1.attachment_count, vl.swap.extent);
     vkCmdBeginRenderPass(vl.command_buffers[vl.image_index], &renderpass_info, VK_SUBPASS_CONTENTS_INLINE);
 	vkCmdEndRenderPass(vl.command_buffers[vl.image_index]);
- 
+ */
 }
 void frame_end(void)
 {

@@ -1,9 +1,12 @@
 #include "tools.h"
 #define EXEC 1
+#define VOLK_IMPLEMENTATION
+#define VK_NO_PROTOTYPES
+#define VK_USE_PLATFORM_WIN32_KHR
+#include "vulkan/volk.h"
+
 
 #if defined(PLATFORM_WINDOWS) && defined(NOGLFW)
-	#include "vulkan.h"
-	#include "vulkan_win32.h"
 	#include "windows.h"
 #else
 	#define GLFW_INCLUDE_VULKAN
