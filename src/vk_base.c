@@ -1,14 +1,18 @@
-#include "stdio.h"
+//#include "stdio.h"
+
 #include "tools.h"
 #include "stdlib.h"
 #include "string.h"
 
 #define VK_STANDALONE 1
+#define USE_VOLK 1
+
 #ifdef VK_STANDALONE
     #define NOGLFW 1
     #include "vkwin.h"
     Window wnd;
 #else
+    #include "bconfig.h"
     extern int vk_getWidth();
     extern int vk_getHeight();
     extern HWND vk_getWindowSystemHandle();
@@ -18,8 +22,14 @@
         printf("%s\n", text);
     }
     #include "vk_base.h"
+#ifdef USE_VOLK    
+    #define VK_NO_PROTOTYPES 1
     #define VOLK_IMPLEMENTATION
     #include "vulkan/volk.h"
+#else
+    #include "vulkan/vulkan.h"
+#endif
+
 #endif
 
 
@@ -380,7 +390,7 @@ void fbo_cleanup(FrameBufferObject *fbo)
 //attaches ALLOCATED memory block to buffer!
 void buf_bind(DataBuffer *buf, VkDeviceSize offset)
 {
-	vkBindBufferMemory(buf->device, buf->buffer, buf->mem, offset);
+	vkBindBufferMemory(vl.device, buf->buffer, buf->mem, offset);
 }
 
 void buf_copy_to(DataBuffer *src,void *data, VkDeviceSize size)
@@ -395,17 +405,18 @@ void buf_setup_descriptor(DataBuffer *buf, VkDeviceSize size, VkDeviceSize offse
 	buf->desc.buffer = buf->buffer;
 	buf->desc.range = size;
 }
-
 VkResult buf_map(DataBuffer *buf, VkDeviceSize size, VkDeviceSize offset)
 {
-	return vkMapMemory(buf->device, buf->mem, offset, size, 0, &buf->mapped);//@check @check @check @check
+    //printf("buf->mem = %i\n\n", buf->mem);
+    //fflush(stdout);
+	return vkMapMemory(vl.device, buf->mem, offset, size, 0, &buf->mapped);//@check @check @check @check
 }
 
 void buf_unmap(DataBuffer *buf)
 {
 	if (buf->mapped)
 	{
-		vkUnmapMemory(buf->device, buf->mem);
+		vkUnmapMemory(vl.device, buf->mem);
 		buf->mapped = NULL;
 	}
 }
@@ -415,11 +426,11 @@ void buf_destroy(DataBuffer *buf)
     if (!buf->active)return;
 	if (buf->buffer)
 	{
-		vkDestroyBuffer(buf->device, buf->buffer, NULL);
+		vkDestroyBuffer(vl.device, buf->buffer, NULL);
 	}
 	if (buf->mem)
 	{
-		vkFreeMemory(buf->device, buf->mem, NULL);
+		vkFreeMemory(vl.device, buf->mem, NULL);
 	}
     buf->active = FALSE;
 }
@@ -430,7 +441,6 @@ void buf_destroy(DataBuffer *buf)
 
 MultiAllocBuffer global_vertex_buffer;
 MultiAllocBuffer global_index_buffer;
-
 void create_buffer(VkBufferUsageFlagBits usage, VkMemoryPropertyFlagBits mem_flags, DataBuffer *buf, VkDeviceSize size, void *data);
 
 b32 multi_alloc_buffer_init(MultiAllocBuffer* buf, u32 buffer_total_size, VkBufferUsageFlagBits usage)
@@ -720,7 +730,12 @@ VkPipeline build_pipeline(VkDevice device, PipelineBuilder p,VkRenderPass render
 	
 
     VkDynamicState dynamic_state_enables[] =
-    { VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR, VK_DYNAMIC_STATE_PRIMITIVE_TOPOLOGY_EXT };
+    { VK_DYNAMIC_STATE_VIEWPORT, 
+        VK_DYNAMIC_STATE_SCISSOR 
+#ifdef USE_VOLK
+        ,VK_DYNAMIC_STATE_PRIMITIVE_TOPOLOGY_EXT 
+#endif
+    };
     VkPipelineDynamicStateCreateInfo dynamic_state = { 0 };
     dynamic_state.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
     dynamic_state.pNext = NULL;
@@ -1079,7 +1094,11 @@ const u32 enable_validation_layers= TRUE;
 const u32 enable_validation_layers = TRUE;
 #endif
 
-const char* device_extensions[] = { VK_KHR_SWAPCHAIN_EXTENSION_NAME, "VK_EXT_extended_dynamic_state"};//, VK_KHR_DYNAMIC_RENDERING_EXTENSION_NAME };
+const char* device_extensions[] = { VK_KHR_SWAPCHAIN_EXTENSION_NAME, 
+#ifdef USE_VOLK
+"VK_EXT_extended_dynamic_state"
+#endif
+};//, VK_KHR_DYNAMIC_RENDERING_EXTENSION_NAME };
 
 
 typedef struct UniformBufferObject
@@ -1188,7 +1207,7 @@ SwapChainSupportDetails query_swapchain_support(VkPhysicalDevice device)
 }
 
 u32 check_validation_layer_support(void){
-	u32 layer_count;
+	u32 layer_count = 0;
 	vkEnumerateInstanceLayerProperties(&layer_count, NULL);
     
 	VkLayerProperties *available_layers = (VkLayerProperties*)malloc(sizeof(VkLayerProperties) * layer_count);
@@ -1234,7 +1253,7 @@ void vl_create_instance(void) {
 	appinfo.applicationVersion = VK_MAKE_VERSION(1,0,0);
 	appinfo.pEngineName = "Hive3D";
 	appinfo.engineVersion = VK_MAKE_VERSION(1,0,0);
-	appinfo.apiVersion = VK_API_VERSION_1_2;
+	appinfo.apiVersion = VK_API_VERSION_1_1;
     
     
 	VkInstanceCreateInfo create_info = {0};
@@ -1257,8 +1276,10 @@ void vl_create_instance(void) {
 
     
 	VK_CHECK(vkCreateInstance(&create_info, NULL, &vl.instance));
+#ifdef USE_VOLK
     volkLoadInstance(vl.instance);
-    
+#endif
+
 	//(OPTIONAL): extension support
 	u32 ext_count = 0;
 	vkEnumerateInstanceExtensionProperties(NULL, &ext_count, NULL);
@@ -1701,7 +1722,7 @@ void create_descriptor_pool(VkDescriptorPool *descriptor_pool,ShaderObject *vert
 	buf_free(pool_size);
 }
 
-internal VkClearValue clear_values[5];
+VkClearValue clear_values[5];
 VkRenderPassBeginInfo rp_info(VkRenderPass rp, VkFramebuffer fbo, u32 attachment_count, VkExtent2D extent)
 {
     VkRenderPassBeginInfo rp_info = { 0 };
@@ -1868,7 +1889,6 @@ void vl_create_command_pool(void)
 
 void render_fullscreen(VkCommandBuffer command_buf, u32 image_index)
 {    
-return;
     //VkRenderPassBeginInfo renderpass_info = rp_info(vl.render_pass_basic, vl.swap.framebuffers[vl.image_index], 1);
     VkRenderPassBeginInfo renderpass_info = rp_info(fbo1.render_renderpass, fbo1.framebuffer, fbo1.attachment_count, vl.swap.extent);
     vkCmdBeginRenderPass(command_buf, &renderpass_info, VK_SUBPASS_CONTENTS_INLINE);
@@ -1953,7 +1973,7 @@ void create_buffer(VkBufferUsageFlagBits usage, VkMemoryPropertyFlagBits mem_fla
 	//[2]: set some important data fields
 	buf->alignment = mem_req.alignment;
 	buf->size = size;
-	buf->usage_flags = usage;
+	buf->usage_flags = usage; //dfsfs
 	//buf->memory_property_flags = properties; //HOST_COHERENT HOST_VISIBLE etc.
 	
 	//[3]:if data pointer has data, we map the buffer and copy those data over to OUR buffer
@@ -2303,7 +2323,7 @@ TextureObject create_depth_attachment(u32 width, u32 height)
     depth_attachment.height = height;
     create_texture_sampler(&depth_attachment.sampler);
     
-    create_texture_sampler(&depth_attachment.sampler);
+    //create_texture_sampler(&depth_attachment.sampler);
 	return depth_attachment;
 }
 
@@ -2636,7 +2656,9 @@ void render_cube_immediate(VkCommandBuffer command_buf, u32 image_index, Pipelin
 
 
 	vkCmdBindPipeline(command_buf, VK_PIPELINE_BIND_POINT_GRAPHICS, p->pipeline);
+#ifdef USE_VOLK
     vkCmdSetPrimitiveTopologyEXT(command_buf,VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST);
+#endif
 
     VkBuffer vertex_buffers[] = {vertex_buffer_real.buffer};
     VkDeviceSize offsets[] = {0};
@@ -2705,8 +2727,9 @@ void render_def_vbo(float *mvp, vec4 color, DataBuffer *vbo, DataBuffer *ibo,u32
 
 
     vkCmdBindPipeline(command_buf, VK_PIPELINE_BIND_POINT_GRAPHICS, p->pipeline);
-
+#ifdef USE_VOLK
     vkCmdSetPrimitiveTopologyEXT(command_buf, topology);
+#endif
 
     if (vbo->active && ibo->active) //this means that we have static geometry
     {
@@ -2803,7 +2826,10 @@ void render_effect_vbo(PipelineObject *pipe, DataBuffer *ubo, DataBuffer* vbo, D
 
 
     vkCmdBindPipeline(command_buf, VK_PIPELINE_BIND_POINT_GRAPHICS, p->pipeline);
+
+#ifdef USE_VOLK
     vkCmdSetPrimitiveTopologyEXT(command_buf, VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST);
+#endif
 
     VkBuffer vertex_buffers[] = { vbo->buffer };
     VkDeviceSize offsets[] = { 0 };
@@ -3029,7 +3055,7 @@ void vulkan_layer_init(void)
 	vl = (VulkanLayer){0};
 #endif
 	vl_create_instance();
-    vl_setup_debug_messenger();
+    //vl_setup_debug_messenger();
     create_surface();
     vl_pick_physical_device();
     vl_create_logical_device();
@@ -3043,7 +3069,9 @@ void vulkan_layer_init(void)
 }
 
 int vulkan_init(void) {
+#ifdef USE_VOLK
     volkInitialize();
+#endif
 	vulkan_layer_init();
     //vkCmdBeginRenderingKHR = (vkGetInstanceProcAddr(vl.instance, "vkCmdBeginRenderingKHR"));
     //vkCmdEndRenderingKHR = (PFN_vkCmdEndRenderingKHR)vkGetInstanceProcAddr(vl.instance, "vkCmdEndRenderingKHR");
@@ -3058,7 +3086,7 @@ int vulkan_init(void) {
     sample_texture2 = create_texture_image("../resources/generic/textures/checkerboard.png", VK_FORMAT_R8G8B8A8_UNORM);
 #endif
 
-    ubo_manager_init(500);
+    ubo_manager_init(700);
 	
 
 	
@@ -3115,7 +3143,7 @@ void frame_start(void)
     vkResetDescriptorPool(vl.device, vl.def_pipe.descriptor_pools[vl.image_index], NULL);
     vkResetDescriptorPool(vl.device, vl.base_pipe.descriptor_pools[vl.image_index], NULL);
 #endif
-
+    
     VK_CHECK(vkResetCommandBuffer(vl.command_buffers[vl.image_index], VK_COMMAND_BUFFER_RESET_RELEASE_RESOURCES_BIT));
         
 		
@@ -3144,11 +3172,11 @@ void frame_start(void)
 	vkCmdEndRenderPass(vl.command_buffers[vl.image_index]);
     //*/
 
-
-/*
+    /*
     renderpass_info = rp_info(fbo1.clear_renderpass, fbo1.framebuffer, fbo1.attachment_count, vl.swap.extent);
     vkCmdBeginRenderPass(vl.command_buffers[vl.image_index], &renderpass_info, VK_SUBPASS_CONTENTS_INLINE);
 	vkCmdEndRenderPass(vl.command_buffers[vl.image_index]);
+ 
  */
 }
 void frame_end(void)
